@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: paperink-reader
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    disk:
+      name: paperink-data
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: PAPERINK_BOOKS_DIR
+        value: /var/data/books
+      - key: PAPERINK_DATA_DIR
+        value: /var/data/data

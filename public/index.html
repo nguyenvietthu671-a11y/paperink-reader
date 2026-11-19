@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="apple">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#F5F5F7" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>PaperInk — Kệ sách &amp; Trình đọc E-Ink</title>
+
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="/icons/favicon.png" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,500;0,700;1,500&family=Inter:wght@400;500;600;700&family=Literata:ital,opsz,wght@0,7..72,350..650;1,7..72,400..600&family=Lora:ital,wght@0,400..700;1,400..600&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <a href="#main-library" class="skip-link">Đi tới nội dung chính</a>
+
+  <!-- Eye-care global overlays -->
+  <div id="paper-grain-overlay" aria-hidden="true"></div>
+  <div id="warmth-overlay" aria-hidden="true"></div>
+  <div id="extra-dim-overlay" aria-hidden="true"></div>
+
+  <!-- ==================== LIBRARY SHELL ==================== -->
+  <div id="library-view" class="library-view">
+    <!-- Custom Color / Photo Wallpaper Backdrop -->
+    <div id="library-wallpaper" class="library-wallpaper" aria-hidden="true"></div>
+    <div id="library-wallpaper-ambient" class="library-wallpaper-ambient" aria-hidden="true"></div>
+    <div id="library-wallpaper-scrim" class="library-wallpaper-scrim" aria-hidden="true"></div>
+
+    <!-- Single Ultra-Clean Floating Apple Header -->
+    <header class="lib-header">
+      <div class="lib-container lib-header-row">
+        <div class="lib-title-cluster">
+          <button id="drilldown-back-btn" class="back-circle-btn glass-chrome hidden" type="button" aria-label="Quay lại">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div class="title-stack">
+            <div class="title-line">
+              <h1 id="view-title" class="apple-page-title">Kệ sách</h1>
+              <span id="connection-dot" class="conn-dot" title="Trạng thái kết nối PC" aria-label="Trạng thái kết nối"></span>
+            </div>
+            <p id="lib-subtitle" class="lib-subtitle">Đang tải…</p>
+          </div>
+        </div>
+
+        <div class="lib-action-cluster">
+          <button class="hdr-icon-btn glass-chrome" id="lib-search-toggle" type="button" title="Tìm kiếm" aria-label="Mở thanh tìm kiếm" aria-expanded="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7.5"/><line x1="20.5" y1="20.5" x2="16.4" y2="16.4"/></svg>
+          </button>
+          <button class="hdr-icon-btn glass-chrome" id="lib-studio-btn" type="button" title="Tùy chỉnh kệ gỗ, sticker & nền" aria-label="Tùy chỉnh kệ gỗ, sticker và nền">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
+          </button>
+          <button class="hdr-icon-btn glass-chrome" id="lib-more-btn" type="button" title="Thêm tiện ích (S25 Ultra, Từ vựng, Nhập sách)" aria-label="Mở menu tiện ích">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Expandable Spotlight Search Pill (hidden by default for maximum visual calm!) -->
+      <div id="search-drawer" class="lib-container search-drawer hidden">
+        <div class="apple-search-field glass-chrome">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7.5"/>
+            <line x1="20.5" y1="20.5" x2="16.4" y2="16.4"/>
+          </svg>
+          <label for="lib-search" class="sr-only">Tìm tên sách, tác giả, thể loại, bộ truyện</label>
+          <input id="lib-search" type="search" placeholder="Tìm tên sách, tác giả, thể loại, bộ truyện…" autocomplete="off" />
+          <button id="search-clear-btn" class="search-close-btn" type="button" aria-label="Đóng tìm kiếm">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Edit Stickers Mode Floating Banner -->
+      <div id="edit-shelf-banner" class="lib-container edit-shelf-banner hidden">
+        <div class="edit-banner-pill glass-chrome">
+          <span class="edit-banner-text">Kéo sticker tới bất kỳ vị trí nào trên kệ</span>
+          <div class="edit-banner-btns">
+            <button class="mini-pill-btn" id="banner-upload-sticker-btn" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Tải sticker</span>
+            </button>
+            <button class="mini-pill-btn" id="banner-open-studio-btn" type="button">Kho sticker</button>
+            <button class="mini-pill-btn primary" id="banner-done-edit-btn" type="button">Xong</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <input type="file" id="import-epub-input" accept=".epub,application/epub+zip" multiple hidden />
+    <input type="file" id="upload-sticker-input" accept="image/png,image/webp,image/svg+xml,image/gif,image/*" multiple hidden />
+    <input type="file" id="upload-wallpaper-input" accept="image/*" hidden />
+
+    <main id="main-library" class="lib-main">
+      <div class="lib-container">
+        <!-- ===== PAGE 1: BOOKSHELF / DRILLDOWN ===== -->
+        <section id="page-shelf" class="app-page">
+          <!-- Quiet Minimal Filter Strip (Whisper-light hairline typography, zero boxy buttons!) -->
+          <div id="shelf-filter-bar" class="quiet-filter-bar">
+            <div class="quiet-tabs" role="tablist" aria-label="Lọc trạng thái sách">
+              <button class="quiet-tab active" data-filter="all" role="tab" aria-selected="true" type="button">
+                Tất cả <span id="tab-count-all" class="q-num">0</span>
+              </button>
+              <button class="quiet-tab" data-filter="reading" role="tab" aria-selected="false" type="button">
+                Đang đọc <span id="tab-count-reading" class="q-num">0</span>
+              </button>
+              <button class="quiet-tab" data-filter="offline" role="tab" aria-selected="false" type="button">
+                Offline <span id="tab-count-offline" class="q-num">0</span>
+              </button>
+            </div>
+
+            <div class="quiet-right">
+              <button class="quiet-action-link" id="toggle-drag-mode-btn" type="button" title="Kéo thả sắp xếp sticker trên kệ">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
+                <span>Sắp xếp sticker</span>
+              </button>
+              <label for="lib-sort" class="sr-only">Sắp xếp sách</label>
+              <div class="quiet-select-wrap">
+                <select id="lib-sort" class="quiet-select" aria-label="Sắp xếp">
+                  <option value="recent">Gần đây</option>
+                  <option value="title">Tên A–Z</option>
+                  <option value="author">Tác giả</option>
+                  <option value="series">Thứ tự tập</option>
+                  <option value="newest">Mới thêm</option>
+                </select>
+                <svg class="select-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Compact Apple Now-Reading Banner (only 1 sleek banner, leaves full room for shelves!) -->
+          <div id="continue-section" class="now-reading-wrap hidden">
+            <div id="continue-strip" class="now-reading-strip"></div>
+          </div>
+
+          <!-- Tactile Wooden Bookshelf / Grid / List -->
+          <div id="books-container"></div>
+          <div id="load-more-wrap" class="load-more-wrap hidden">
+            <button id="load-more-btn" class="apple-pill-btn glass-pill large" type="button">Hiện thêm sách</button>
+          </div>
+        </section>
+
+        <!-- ===== PAGE 2: GENRES / AUTHORS / SERIES ===== -->
+        <section id="page-collections" class="app-page hidden">
+          <div id="collections-grid" class="collections-grid"></div>
+        </section>
+
+        <!-- ===== PAGE 3: READING PROGRESS DASHBOARD ===== -->
+        <section id="page-progress" class="app-page hidden">
+          <div id="progress-dashboard" class="progress-dashboard"></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Floating Sticker Inspector Dock (appears when a sticker is selected in Edit Mode!) -->
+    <div id="sticker-inspector" class="sticker-inspector glass-chrome hidden" role="toolbar" aria-label="Chỉnh sửa sticker đang chọn">
+      <div class="inspector-sliders">
+        <label class="insp-slider-col">
+          <span>Cỡ</span>
+          <input id="insp-scale" class="apple-range compact-range" type="range" min="0.45" max="1.9" step="0.05" value="1" />
+        </label>
+        <label class="insp-slider-col">
+          <span>Xoay</span>
+          <input id="insp-rotate" class="apple-range compact-range" type="range" min="-30" max="30" step="2" value="0" />
+        </label>
+      </div>
+      <div class="inspector-actions">
+        <button class="insp-btn" id="insp-flip-btn" type="button" title="Lật ngang">Lật</button>
+        <button class="insp-btn" id="insp-dup-btn" type="button" title="Nhân đôi sticker">Nhân đôi</button>
+        <button class="insp-btn danger" id="insp-del-btn" type="button" title="Xóa sticker">Xóa</button>
+      </div>
+    </div>
+
+    <!-- Floating Apple iOS 26 Liquid Glass Bottom Tab Bar -->
+    <nav id="bottom-tabbar" class="bottom-tabbar glass-chrome" aria-label="Điều hướng chính">
+      <button class="btab active" data-route="shelf" type="button" aria-current="page">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+        </svg>
+        <span>Kệ sách</span>
+      </button>
+      <button class="btab" data-route="genres" type="button">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+          <circle cx="7" cy="7" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+        <span>Thể loại</span>
+      </button>
+      <button class="btab" data-route="authors" type="button">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+        <span>Tác giả</span>
+      </button>
+      <button class="btab" data-route="series" type="button">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+          <polyline points="2 17 12 22 22 17"/>
+          <polyline points="2 12 12 17 22 12"/>
+        </svg>
+        <span>Bộ truyện</span>
+      </button>
+      <button class="btab" data-route="progress" type="button">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+        <span>Tiến độ</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ==================== READER VIEW ==================== -->
+  <div id="reader-view" class="reader-view hidden">
+    <div id="eink-flash" class="eink-flash" aria-hidden="true"></div>
+    <div id="page-curl-overlay" class="page-curl-overlay" aria-hidden="true"></div>
+
+    <div id="page-dog-ear" class="page-dog-ear" aria-hidden="true">
+      <svg width="20" height="28" viewBox="0 0 20 28" fill="currentColor">
+        <path d="M2 0h16a2 2 0 0 1 2 2v26l-10-7.2L0 28V2a2 2 0 0 1 2-2Z"/>
+      </svg>
+    </div>
+
+    <div id="reader-micro-header" class="reader-micro-header">
+      <span id="micro-book-title"></span>
+      <span id="micro-chapter-title"></span>
+    </div>
+
+    <div id="reader-stage" class="reader-stage mode-paginated">
+      <div id="page-mask" class="page-mask">
+        <article id="chapter-content" class="chapter-content"></article>
+      </div>
+      <!-- Interactive Finger-Tracking Apple Books 2-Page Curl Stage -->
+      <div id="curl-stage" class="curl-stage hidden" aria-hidden="true">
+        <div id="curl-top-sheet" class="curl-top-sheet"></div>
+        <div id="curl-under-shadow" class="curl-under-shadow"></div>
+        <div id="curl-flap" class="curl-flap">
+          <div id="curl-flap-back" class="curl-flap-back"></div>
+        </div>
+      </div>
+      <!-- Samsung Notes-style S Pen pressure-sensitive Ink Layer -->
+      <canvas id="ink-canvas" class="ink-canvas" aria-label="Bảng viết tay S Pen trên trang sách"></canvas>
+    </div>
+
+    <!-- Optional Pill Reading Progress Bar -->
+    <div id="reader-progress-pill-wrap" class="reader-progress-pill-wrap hidden">
+      <div class="reader-pill-track"><div id="reader-pill-fill" class="reader-pill-fill"></div></div>
+      <span id="reader-pill-pct" class="tabular">0%</span>
+    </div>
+
+    <div id="reader-micro-footer" class="reader-micro-footer">
+      <span id="micro-page-info">Trang 1 / 1</span>
+      <span id="micro-progress-info">0%</span>
+    </div>
+    <div id="reader-progress-line" class="reader-progress-line" aria-hidden="true">
+      <div id="reader-progress-fill" class="reader-progress-fill"></div>
+    </div>
+
+    <button id="undo-jump-btn" class="undo-jump-btn glass-chrome hidden" type="button">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+      <span>Quay lại vị trí trước</span>
+    </button>
+
+    <header id="reader-hud-top" class="reader-hud-top">
+      <div class="hud-capsule glass-chrome">
+        <button class="hud-icon-btn" id="hud-back-btn" type="button" title="Về kệ sách" aria-label="Quay về kệ sách">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <button class="hud-title-col hud-title-btn" id="hud-book-info-btn" type="button" title="Xem mô tả & đánh giá sách">
+          <div id="hud-book-title" class="hud-book-title"></div>
+          <div id="hud-chapter-title" class="hud-chapter-title"></div>
+        </button>
+        <div class="hud-top-actions">
+          <button class="hud-icon-btn" id="hud-pen-btn" type="button" title="Viết / Ghi chú trực tiếp bằng S Pen (Samsung Notes)" aria-label="Bật hoặc tắt bút viết S Pen" aria-pressed="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+          <button class="hud-icon-btn" id="hud-tapdict-btn" type="button" title="Bật/Tắt chạm từ tra Anh–Việt nhanh" aria-label="Chế độ chạm từ tra Anh Việt" aria-pressed="false">
+            <span class="dict-glyph" aria-hidden="true">A→V</span>
+          </button>
+          <button class="hud-icon-btn" id="hud-bookmark-btn" type="button" title="Đánh dấu trang này (B)" aria-label="Đánh dấu trang này" aria-pressed="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          </button>
+          <button class="hud-icon-btn" id="hud-fullscreen-btn" type="button" title="Toàn màn hình" aria-label="Bật hoặc tắt toàn màn hình">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Samsung Notes-Style Floating S Pen Toolbar -->
+    <div id="pen-toolbar" class="pen-toolbar glass-chrome" role="toolbar" aria-label="Thanh bút S Pen ghi chú trực tiếp">
+      <div class="pen-row-top">
+        <div class="pen-tools-group" role="group" aria-label="Chọn loại bút">
+          <button class="pen-tool-btn active" data-pentool="pen" type="button" title="Bút mực S Pen">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </button>
+          <button class="pen-tool-btn" data-pentool="pencil" type="button" title="Bút chì mềm">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+          <button class="pen-tool-btn" data-pentool="highlighter" type="button" title="Bút dạ quang">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+          </button>
+          <button class="pen-tool-btn" data-pentool="eraser" type="button" title="Tẩy nét">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+          </button>
+        </div>
+
+        <div class="pen-sizes-group" role="group" aria-label="Độ dày nét">
+          <button class="pen-size-btn" data-pensize="1.8" type="button" title="Nét mảnh" aria-label="Nét mảnh"><span style="width:5px;height:5px"></span></button>
+          <button class="pen-size-btn active" data-pensize="2.6" type="button" title="Nét vừa" aria-label="Nét vừa"><span style="width:8px;height:8px"></span></button>
+          <button class="pen-size-btn" data-pensize="4.6" type="button" title="Nét đậm" aria-label="Nét đậm"><span style="width:12px;height:12px"></span></button>
+        </div>
+
+        <div class="pen-actions-group">
+          <button class="pen-mini-btn" id="pen-undo-btn" type="button" title="Hoàn tác" aria-label="Hoàn tác">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+          </button>
+          <button class="pen-mini-btn" id="pen-redo-btn" type="button" title="Làm lại" aria-label="Làm lại">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+          </button>
+          <button class="pen-mini-btn danger" id="pen-clear-btn" type="button" title="Xóa toàn bộ nét trên trang này" aria-label="Xóa trang viết">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="pen-row-bottom">
+        <div class="pen-colors-group" role="group" aria-label="Chọn màu mực">
+          <button class="pen-color-dot active" data-pencolor="auto" style="background:linear-gradient(135deg,#1d1d1f 50%,#e4dfd5 50%)" title="Mực tự động sáng/tối" aria-label="Mực tự động" type="button"></button>
+          <button class="pen-color-dot" data-pencolor="#D93829" style="background:#D93829" title="Đỏ chấm bài" aria-label="Màu đỏ" type="button"></button>
+          <button class="pen-color-dot" data-pencolor="#0066CC" style="background:#0066CC" title="Xanh bút bi" aria-label="Màu xanh dương" type="button"></button>
+          <button class="pen-color-dot" data-pencolor="#2D8A4E" style="background:#2D8A4E" title="Xanh lá" aria-label="Màu xanh lá" type="button"></button>
+          <button class="pen-color-dot" data-pencolor="#F2B705" style="background:#F2B705" title="Vàng dạ quang" aria-label="Màu vàng" type="button"></button>
+        </div>
+
+        <div class="pen-right-pills">
+          <button class="pen-chip-btn" id="pen-spen-only-btn" type="button" aria-pressed="false" title="Chỉ nhận bút S Pen, ngón tay vẫn lật trang không bị lem">Chỉ S Pen</button>
+          <button class="pen-chip-btn primary" id="pen-done-btn" type="button">Xong</button>
+        </div>
+      </div>
+    </div>
+
+    <footer id="reader-hud-bottom" class="reader-hud-bottom">
+      <div class="hud-dock glass-chrome">
+        <div class="scrubber-row">
+          <button class="chap-step-btn" id="hud-prev-chap" type="button" title="Chương trước" aria-label="Chương trước">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div class="scrubber-mid">
+            <input id="reader-scrubber" class="apple-range" type="range" min="0" max="1" value="0" step="1" aria-label="Thanh chuyển nhanh trang" />
+            <div id="scrubber-label" class="scrubber-label">Trang 1 / 1</div>
+          </div>
+          <button class="chap-step-btn" id="hud-next-chap" type="button" title="Chương sau" aria-label="Chương sau">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+
+        <div class="hud-bottom-tools">
+          <button class="hud-tool-btn" id="hud-toc-btn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+            <span>Mục lục</span>
+          </button>
+          <button class="hud-tool-btn" id="hud-aa-btn" type="button">
+            <span class="aa-glyph" aria-hidden="true">Aa</span>
+            <span>Giao diện</span>
+          </button>
+          <button class="hud-tool-btn" id="hud-vocab-btn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5l2.85 5.77 6.37.93-4.61 4.5 1.09 6.35L12 17.05l-5.7 3 1.09-6.35-4.61-4.5 6.37-.93L12 2.5Z"/></svg>
+            <span>Từ vựng</span>
+          </button>
+        </div>
+      </div>
+    </footer>
+
+    <div id="selection-bar" class="selection-bar glass-chrome" role="toolbar" aria-label="Công cụ văn bản đã chọn">
+      <button class="sel-action-btn primary" id="sel-dict-btn" type="button">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
+        <span>Tra / Dịch</span>
+      </button>
+      <div class="sel-hl-dots" role="group" aria-label="Chọn màu tô sáng">
+        <button class="sel-hl-dot hl-swatch-sepia" data-color="sepia" title="Vàng giấy" aria-label="Tô màu vàng giấy" type="button"></button>
+        <button class="sel-hl-dot hl-swatch-sage" data-color="sage" title="Xanh dịu" aria-label="Tô màu xanh dịu" type="button"></button>
+        <button class="sel-hl-dot hl-swatch-ink" data-color="ink" title="Gạch mực" aria-label="Tô gạch mực" type="button"></button>
+        <button class="sel-hl-dot hl-swatch-rose" data-color="rose" title="Đỏ đất" aria-label="Tô màu đỏ đất" type="button"></button>
+      </div>
+      <button class="sel-action-btn" id="sel-note-btn" type="button">Ghi chú</button>
+      <button class="sel-action-btn" id="sel-copy-btn" type="button">Chép</button>
+      <button class="sel-close-btn" id="sel-close-btn" type="button" aria-label="Bỏ chọn văn bản">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ==================== MORE UTILITIES SHEET (Clean Apple Action Sheet) ==================== -->
+  <div id="more-backdrop" class="sheet-backdrop"></div>
+  <aside id="more-sheet" class="sheet-panel bottom-sheet compact-sheet" role="dialog" aria-modal="true" aria-labelledby="more-sheet-title">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header compact">
+      <h2 id="more-sheet-title">Tiện ích thư viện</h2>
+      <button class="sheet-close-circle" id="more-close-btn" type="button" aria-label="Đóng">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-content">
+      <div class="inset-group">
+        <button class="inset-action-row" id="more-connect-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="3"/><line x1="10.5" y1="18.25" x2="13.5" y2="18.25"/></svg>
+          <div><strong>Mở &amp; Cài app lên S25 Ultra</strong><span>Mã QR &amp; hướng dẫn chạy Offline</span></div>
+        </button>
+        <button class="inset-action-row" id="more-vocab-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5l2.85 5.77 6.37.93-4.61 4.5 1.09 6.35L12 17.05l-5.7 3 1.09-6.35-4.61-4.5 6.37-.93L12 2.5Z"/></svg>
+          <div><strong>Sổ từ vựng Anh – Việt</strong><span>Xem lại &amp; xuất các từ đã lưu</span></div>
+        </button>
+        <button class="inset-action-row" id="more-import-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <div><strong>Nhập thêm file EPUB từ máy</strong><span>Lưu trực tiếp vào bộ nhớ Offline</span></div>
+        </button>
+        <button class="inset-action-row" id="more-rescan-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+          <div><strong>Quét lại kho sách trên PC</strong><span>Cập nhật sách mới thêm vào thư mục kindle</span></div>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== STUDIO SHEET: KỆ GỖ, STICKER & MÀU/ẢNH NỀN ==================== -->
+  <div id="studio-backdrop" class="sheet-backdrop"></div>
+  <aside id="studio-sheet" class="sheet-panel bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="studio-sheet-title">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header">
+      <h2 id="studio-sheet-title">Tùy chỉnh Kệ, Sticker &amp; Nền</h2>
+      <button class="sheet-close-circle" id="studio-close-btn" type="button" aria-label="Đóng bảng tùy chỉnh">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-content">
+      <!-- 1. Shelf Style -->
+      <div class="inset-section">
+        <div class="inset-section-label">Kiểu kệ &amp; Trưng bày</div>
+        <div id="shelf-style-grid" class="shelf-style-grid"></div>
+      </div>
+
+      <!-- 2. Background: Color Picker OR Custom Photo Upload -->
+      <div class="inset-section">
+        <div class="inset-section-label">Màu nền &amp; Ảnh nền</div>
+        <div class="inset-group">
+          <div class="inset-row stack-item">
+            <div class="ios-segmented compact">
+              <button class="seg-opt bg-mode-pill" data-bgmode="color" type="button">Chọn màu nền</button>
+              <button class="seg-opt bg-mode-pill" data-bgmode="image" type="button">Tải ảnh nền</button>
+            </div>
+          </div>
+
+          <!-- Color Picker Panel -->
+          <div id="bg-color-panel" class="inset-row stack-item">
+            <div class="color-picker-row">
+              <label class="rainbow-picker-wrap" title="Chọn màu tùy ý">
+                <input id="custom-bg-color-input" type="color" value="#F5F5F7" aria-label="Chọn màu nền tùy ý" />
+                <span class="rainbow-wheel" aria-hidden="true"></span>
+                <span id="custom-bg-hex" class="hex-label tabular">#F5F5F7</span>
+              </label>
+              <div id="bg-color-swatches" class="bg-color-swatches"></div>
+            </div>
+            <label class="switch-row compact-switch" for="set-bg-ambient">
+              <span>Ánh sáng phòng dịu (Studio glow)</span>
+              <input id="set-bg-ambient" class="ios-switch" type="checkbox" checked />
+            </label>
+          </div>
+
+          <!-- Image Upload Panel -->
+          <div id="bg-image-panel" class="inset-row stack-item hidden">
+            <div class="wallpaper-upload-row">
+              <button class="apple-pill-btn small" id="upload-wallpaper-btn" type="button">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                <span>Chọn ảnh nền từ máy</span>
+              </button>
+              <button class="text-danger-btn hidden" id="clear-wallpaper-btn" type="button">Gỡ ảnh nền</button>
+            </div>
+            <div class="slider-item sub-slider">
+              <div class="slider-meta">
+                <label for="set-wp-blur">Độ mờ ảnh nền (Blur)</label>
+                <strong id="val-wp-blur" class="tabular">0px</strong>
+              </div>
+              <input id="set-wp-blur" class="apple-range" type="range" min="0" max="24" step="2" value="0" />
+            </div>
+            <div class="slider-item sub-slider">
+              <div class="slider-meta">
+                <label for="set-wp-dim">Lớp phủ làm dịu nền (Dim)</label>
+                <strong id="val-wp-dim" class="tabular">0%</strong>
+              </div>
+              <input id="set-wp-dim" class="apple-range" type="range" min="0" max="75" step="5" value="0" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Stickers Upload + Drag Placement -->
+      <div class="inset-section">
+        <div class="inset-section-label">Sticker &amp; Đồ trang trí kéo thả</div>
+        <div class="inset-group">
+          <div class="inset-row sticker-top-bar">
+            <button class="apple-pill-btn small" id="studio-upload-sticker-btn" type="button">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <span>Tải Sticker (PNG/WebP)</span>
+            </button>
+            <button class="apple-pill-btn secondary small" id="studio-drag-mode-btn" type="button">Kéo sắp xếp trên kệ</button>
+          </div>
+
+          <div class="inset-row stack-item">
+            <div class="mini-label">Sticker của bạn (chạm để dán lên kệ)</div>
+            <div id="custom-stickers-grid" class="sticker-pack-grid"></div>
+          </div>
+
+          <div class="inset-row stack-item">
+            <div class="mini-label">Đồ trang trí tối giản có sẵn (chạm để dán)</div>
+            <div id="builtin-stickers-grid" class="sticker-pack-grid"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== APPEARANCE & EYE-CARE SHEET (Aa) ==================== -->
+  <div id="aa-backdrop" class="sheet-backdrop"></div>
+  <aside id="aa-sheet" class="sheet-panel bottom-sheet aa-spacious-sheet" role="dialog" aria-modal="true" aria-labelledby="aa-sheet-title">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header compact aa-header-stack">
+      <div class="aa-header-top">
+        <h2 id="aa-sheet-title">Giao diện đọc &amp; Phông chữ</h2>
+        <button class="sheet-close-circle" id="aa-close-btn" type="button" aria-label="Đóng bảng giao diện">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="ios-segmented compact aa-tabs" role="tablist" aria-label="Nhóm tùy chỉnh đọc sách">
+        <button class="seg-opt aa-tab active" data-aatab="typo" role="tab" aria-selected="true" type="button">Chữ &amp; Font</button>
+        <button class="seg-opt aa-tab" data-aatab="page" role="tab" aria-selected="false" type="button">Lật trang &amp; Tiến độ</button>
+        <button class="seg-opt aa-tab" data-aatab="theme" role="tab" aria-selected="false" type="button">Nền &amp; Mắt</button>
+      </div>
+    </div>
+
+    <!-- Live Preview Card (Heading Font + Heading Size + Body Font + Body Size + Spacing + Progress Bar) -->
+    <div id="aa-live-preview" class="aa-live-preview" aria-label="Xem trước kiểu chữ và thanh tiến độ">
+      <div class="aa-prev-heading">Chapter One · Tiêu đề chương</div>
+      <p class="aa-prev-body">Ánh sáng buổi sớm chiếu nghiêng qua hàng cây thông, từng dòng chữ hiển thị sắc nét và êm dịu như trang giấy in.</p>
+      <div id="aa-prev-prog-line" class="aa-prev-prog-line"><div class="aa-prev-prog-fill"></div></div>
+      <div id="aa-prev-prog-pill" class="aa-prev-prog-pill hidden">
+        <div class="aa-prev-pill-track"><div class="aa-prev-prog-fill"></div></div>
+        <span class="tabular">64%</span>
+      </div>
+      <div id="aa-prev-prog-pct" class="aa-prev-prog-pct hidden tabular">Trang 14 / 22 · 64%</div>
+    </div>
+
+    <div class="sheet-content aa-sheet-body">
+      <!-- TAB 1: TYPOGRAPHY, FONTS & SPACING -->
+      <div class="aa-panel" data-aapanel="typo">
+        <div class="inset-section">
+          <div class="inset-section-label">Phông chữ &amp; Tải font riêng</div>
+          <div class="inset-group">
+            <div class="inset-row font-upload-row">
+              <button class="apple-pill-btn small" id="upload-font-btn" type="button">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Tải font (.ttf, .otf, .woff2)</span>
+              </button>
+              <input type="file" id="upload-font-input" accept=".ttf,.otf,.woff,.woff2,font/*" multiple hidden />
+            </div>
+            <div id="custom-fonts-row" class="inset-row stack-item hidden">
+              <div class="mini-label">Font bạn đã tải lên (chạm × để gỡ)</div>
+              <div id="custom-fonts-chips" class="custom-fonts-chips"></div>
+            </div>
+            <div class="inset-row stack-item">
+              <div class="mini-label">Phông chữ văn bản (Body Font)</div>
+              <div id="body-font-pills" class="pill-row wrap"></div>
+            </div>
+            <div class="inset-row stack-item">
+              <div class="mini-label">Phông chữ tiêu đề chương (Heading Font — khác văn bản)</div>
+              <div id="heading-font-pills" class="pill-row wrap"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="inset-section">
+          <div class="inset-section-label">Cỡ chữ &amp; Khoảng cách (Line / Text Spacing)</div>
+          <div class="inset-group">
+            <div class="inset-row slider-item">
+              <div class="slider-meta"><label for="set-font-size">Cỡ chữ văn bản (Body size)</label><strong id="val-font-size" class="tabular">19px</strong></div>
+              <input id="set-font-size" class="apple-range" type="range" min="14" max="30" step="1" value="19" />
+            </div>
+            <div class="inset-row slider-item">
+              <div class="slider-meta"><label for="set-heading-size">Cỡ chữ tiêu đề chương (Heading size)</label><strong id="val-heading-size" class="tabular">28px</strong></div>
+              <input id="set-heading-size" class="apple-range" type="range" min="18" max="44" step="1" value="28" />
+            </div>
+            <div class="inset-row slider-item">
+              <div class="slider-meta"><label for="set-font-weight">Độ đậm mực (Kindle Bold)</label><strong id="val-font-weight" class="tabular">420</strong></div>
+              <input id="set-font-weight" class="apple-range" type="range" min="360" max="600" step="20" value="420" />
+            </div>
+            <div class="inset-row slider-item">
+              <div class="slider-meta"><label for="set-line-height">Giãn dòng (Line spacing)</label><strong id="val-line-height" class="tabular">1.68</strong></div>
+              <input id="set-line-height" class="apple-range" type="range" min="1.25" max="2.3" step="0.05" value="1.68" />
+            </div>
+            <div class="inset-row slider-item">
+              <div class="slider-meta"><label for="set-letter-spacing">Giãn chữ (Text spacing)</label><strong id="val-letter-spacing" class="tabular">0em</strong></div>
+              <input id="set-letter-spacing" class="apple-range" type="range" min="-0.02" max="0.14" step="0.01" value="0" />
+            </div>
+            <div class="inset-row slider-item">
+              <div class="slider-meta"><label for="set-word-spacing">Giãn từ (Word spacing)</label><strong id="val-word-spacing" class="tabular">0em</strong></div>
+              <input id="set-word-spacing" class="apple-range" type="range" min="0" max="0.24" step="0.02" value="0" />
+            </div>
+            <div class="inset-row slider-item">
+              <div class="slider-meta"><label for="set-para-gap">Khoảng cách đoạn</label><strong id="val-para-gap" class="tabular">0.62em</strong></div>
+              <input id="set-para-gap" class="apple-range" type="range" min="0.2" max="1.5" step="0.08" value="0.62" />
+            </div>
+            <div class="inset-row two-col-settings">
+              <div>
+                <div class="mini-label">Lề trang</div>
+                <div class="ios-segmented compact">
+                  <button class="seg-opt margin-pill" data-margin="narrow" type="button">Hẹp</button>
+                  <button class="seg-opt margin-pill" data-margin="medium" type="button">Vừa</button>
+                  <button class="seg-opt margin-pill" data-margin="wide" type="button">Rộng</button>
+                </div>
+              </div>
+              <div>
+                <div class="mini-label">Căn chữ</div>
+                <div class="ios-segmented compact">
+                  <button class="seg-opt align-pill" data-align="justify" type="button">Đều</button>
+                  <button class="seg-opt align-pill" data-align="left" type="button">Trái</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: READING DIRECTION, PAGE TURN EFFECTS & PROGRESS BAR COLORS -->
+      <div class="aa-panel hidden" data-aapanel="page">
+        <div class="inset-section">
+          <div class="inset-section-label">Hướng đọc &amp; Hiệu ứng lật sách</div>
+          <div class="inset-group">
+            <div class="inset-row stack-item">
+              <div class="mini-label">Hướng đọc trong sách</div>
+              <div class="ios-segmented compact">
+                <button class="seg-opt dir-pill" data-dir="horizontal" type="button">Đọc ngang (Lật trang)</button>
+                <button class="seg-opt dir-pill" data-dir="vertical" type="button">Đọc dọc (Cuộn)</button>
+              </div>
+            </div>
+            <div class="inset-row stack-item" id="turn-effect-row">
+              <div class="mini-label">Hiệu ứng lật trang (kéo vuốt tay theo thời gian thực)</div>
+              <div class="ios-segmented compact">
+                <button class="seg-opt effect-pill" data-effect="curl" type="button">Apple Curl</button>
+                <button class="seg-opt effect-pill" data-effect="slide" type="button">Trượt mượt</button>
+                <button class="seg-opt effect-pill" data-effect="eink" type="button">E-Ink nhẹ</button>
+                <button class="seg-opt effect-pill" data-effect="instant" type="button">Tối giản</button>
+              </div>
+              <p class="setting-hint">Chế độ <strong>Apple Curl</strong> &amp; <strong>Trượt mượt</strong> bám theo ngón tay khi bạn vuốt lật trang (thả tay quá 25% sẽ tự gập/trượt tiếp sang trang sau).</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="inset-section">
+          <div class="inset-section-label">Thanh tiến độ đọc &amp; Màu sắc (Solid / Gradient)</div>
+          <div class="inset-group">
+            <div class="inset-row stack-item">
+              <div class="mini-label">Kiểu hiển thị thanh tiến độ</div>
+              <div class="ios-segmented compact">
+                <button class="seg-opt progstyle-pill" data-progstyle="line" type="button">Thanh mảnh</button>
+                <button class="seg-opt progstyle-pill" data-progstyle="pill" type="button">Thanh nổi</button>
+                <button class="seg-opt progstyle-pill" data-progstyle="percent" type="button">Chỉ %</button>
+                <button class="seg-opt progstyle-pill" data-progstyle="hidden" type="button">Ẩn</button>
+              </div>
+            </div>
+            <div class="inset-row stack-item" id="prog-color-section">
+              <div class="mini-label">Kiểu màu thanh tiến độ</div>
+              <div class="ios-segmented compact">
+                <button class="seg-opt progmode-pill" data-progmode="solid" type="button">Màu đơn (Solid)</button>
+                <button class="seg-opt progmode-pill" data-progmode="gradient" type="button">Chuyển sắc (Gradient)</button>
+              </div>
+            </div>
+            <div class="inset-row stack-item" id="prog-solid-panel">
+              <div class="color-picker-row compact-picker-row">
+                <label class="rainbow-picker-wrap" title="Chọn màu đơn tùy ý">
+                  <input id="prog-solid-input" type="color" value="#0071E3" aria-label="Chọn màu đơn cho thanh tiến độ" />
+                  <span class="rainbow-wheel" aria-hidden="true"></span>
+                  <span id="prog-solid-hex" class="hex-label tabular">#0071E3</span>
+                </label>
+                <div id="prog-solid-swatches" class="bg-color-swatches"></div>
+              </div>
+            </div>
+            <div class="inset-row stack-item hidden" id="prog-gradient-panel">
+              <div id="prog-gradient-presets" class="grad-preset-row"></div>
+              <div class="grad-custom-row">
+                <label class="rainbow-picker-wrap" title="Màu bắt đầu gradient">
+                  <input id="prog-grad-start" type="color" value="#0071E3" aria-label="Màu đầu gradient" />
+                  <span id="prog-grad-start-dot" class="grad-mini-dot" style="background:#0071E3"></span>
+                  <span class="hex-label">Đầu</span>
+                </label>
+                <span class="grad-arrow" aria-hidden="true">→</span>
+                <label class="rainbow-picker-wrap" title="Màu kết thúc gradient">
+                  <input id="prog-grad-end" type="color" value="#AF52DE" aria-label="Màu cuối gradient" />
+                  <span id="prog-grad-end-dot" class="grad-mini-dot" style="background:#AF52DE"></span>
+                  <span class="hex-label">Cuối</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: PAPER THEMES & AMOLED EYE-CARE -->
+      <div class="aa-panel hidden" data-aapanel="theme">
+        <div class="inset-section">
+          <div class="inset-section-label">Chế độ nền giấy đọc sách</div>
+          <div class="theme-grid">
+            <button class="theme-swatch" data-theme="apple" type="button"><span class="swatch-preview swatch-apple" aria-hidden="true">Aa</span><span>Apple</span></button>
+            <button class="theme-swatch" data-theme="paper" type="button"><span class="swatch-preview swatch-paper" aria-hidden="true">Aa</span><span>Kindle</span></button>
+            <button class="theme-swatch" data-theme="sepia" type="button"><span class="swatch-preview swatch-sepia" aria-hidden="true">Aa</span><span>Giấy cổ</span></button>
+            <button class="theme-swatch" data-theme="eink" type="button"><span class="swatch-preview swatch-eink" aria-hidden="true">Aa</span><span>E-Ink</span></button>
+            <button class="theme-swatch" data-theme="sage" type="button"><span class="swatch-preview swatch-sage" aria-hidden="true">Aa</span><span>Lá dịu</span></button>
+            <button class="theme-swatch" data-theme="amoled" type="button"><span class="swatch-preview swatch-amoled" aria-hidden="true">Aa</span><span>AMOLED</span></button>
+          </div>
+        </div>
+
+        <div class="inset-section">
+          <div class="inset-section-label">Bảo vệ mắt cho màn AMOLED S25 Ultra</div>
+          <div class="inset-group">
+            <div class="inset-row slider-item">
+              <div class="slider-meta">
+                <label for="set-extra-dim">Giảm sáng mềm (Chống nháy PWM)</label>
+                <strong id="val-extra-dim" class="tabular">0%</strong>
+              </div>
+              <input id="set-extra-dim" class="apple-range" type="range" min="0" max="75" step="5" value="0" />
+              <p class="setting-hint">Ban đêm giữ độ sáng máy ~40% rồi kéo thanh này lên để màn tối dịu không nhấp nháy PWM.</p>
+            </div>
+            <div class="inset-row slider-item">
+              <div class="slider-meta">
+                <label for="set-warmth">Lọc ánh sáng xanh (Độ ấm giấy)</label>
+                <strong id="val-warmth" class="tabular">0%</strong>
+              </div>
+              <input id="set-warmth" class="apple-range" type="range" min="0" max="60" step="5" value="0" />
+            </div>
+            <label class="inset-row switch-row" for="set-paper-grain">
+              <span>Vân giấy E-Ink (Paper grain)</span>
+              <input id="set-paper-grain" class="ios-switch" type="checkbox" checked />
+            </label>
+            <label class="inset-row switch-row" for="set-grayscale">
+              <span>Đen trắng toàn trang (Grayscale)</span>
+              <input id="set-grayscale" class="ios-switch" type="checkbox" />
+            </label>
+          </div>
+        </div>
+
+        <div class="inset-section">
+          <div class="inset-section-label">Trải nghiệm đọc &amp; S Pen</div>
+          <div class="inset-group">
+            <label class="inset-row switch-row" for="set-tap-dict">
+              <span>Chạm 1 lần vào từ để tra Anh–Việt</span>
+              <input id="set-tap-dict" class="ios-switch" type="checkbox" />
+            </label>
+            <label class="inset-row switch-row" for="set-header-footer">
+              <span>Hiện tên sách &amp; chương ở mép trên</span>
+              <input id="set-header-footer" class="ios-switch" type="checkbox" checked />
+            </label>
+            <label class="inset-row switch-row" for="set-auto-offline">
+              <span>Tự động lưu sách Offline khi mở</span>
+              <input id="set-auto-offline" class="ios-switch" type="checkbox" checked />
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== TOC / BOOKMARKS / HIGHLIGHTS / S PEN NOTES DRAWER ==================== -->
+  <div id="nav-drawer-backdrop" class="sheet-backdrop"></div>
+  <aside id="nav-drawer" class="sheet-panel side-drawer" role="dialog" aria-modal="true" aria-label="Mục lục, dấu trang, highlight và ghi chú bút">
+    <div class="sheet-header">
+      <div class="ios-segmented compact" role="tablist">
+        <button class="drawer-tab active" data-navtab="toc" role="tab" aria-selected="true" type="button">Mục lục</button>
+        <button class="drawer-tab" data-navtab="bookmarks" role="tab" aria-selected="false" type="button">Dấu</button>
+        <button class="drawer-tab" data-navtab="highlights" role="tab" aria-selected="false" type="button">Highlight</button>
+        <button class="drawer-tab" data-navtab="ink" role="tab" aria-selected="false" type="button">S Pen</button>
+      </div>
+      <button class="sheet-close-circle" id="nav-drawer-close" type="button" aria-label="Đóng mục lục">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="nav-drawer-body" class="sheet-content"></div>
+  </aside>
+
+  <!-- ==================== BOOK INFO, DESCRIPTION & RATING MODAL ==================== -->
+  <div id="book-info-backdrop" class="sheet-backdrop"></div>
+  <div id="book-info-modal" class="modal-panel large-modal" role="dialog" aria-modal="true" aria-labelledby="book-info-title">
+    <div class="sheet-header compact">
+      <h2 id="book-info-title">Thông tin &amp; Đánh giá sách</h2>
+      <button class="sheet-close-circle" id="book-info-close" type="button" aria-label="Đóng thông tin sách">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="book-info-body" class="sheet-content"></div>
+  </div>
+
+  <!-- ==================== DICTIONARY BOTTOM SHEET ==================== -->
+  <div id="dict-backdrop" class="sheet-backdrop"></div>
+  <aside id="dict-sheet" class="sheet-panel bottom-sheet dict-sheet" role="dialog" aria-modal="true" aria-labelledby="dict-sheet-title">
+    <div class="sheet-grabber" aria-hidden="true"></div>
+    <div class="sheet-header compact">
+      <span id="dict-sheet-title" class="dict-badge">Từ điển Anh – Việt</span>
+      <button class="sheet-close-circle" id="dict-close-btn" type="button" aria-label="Đóng từ điển">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="dict-body" class="sheet-content"></div>
+  </aside>
+
+  <!-- ==================== HIGHLIGHT NOTE MODAL ==================== -->
+  <div id="highlight-backdrop" class="sheet-backdrop"></div>
+  <div id="highlight-modal" class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="hl-modal-title">
+    <div class="sheet-header compact">
+      <h3 id="hl-modal-title">Highlight &amp; Ghi chú</h3>
+      <button class="sheet-close-circle" id="hl-modal-close" type="button" aria-label="Đóng chỉnh sửa ghi chú">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <blockquote id="hl-modal-quote" class="hl-modal-quote"></blockquote>
+      <div class="hl-color-picker">
+        <span>Màu tô</span>
+        <button class="sel-hl-dot hl-edit-color hl-swatch-sepia" data-color="sepia" aria-label="Màu vàng giấy" type="button"></button>
+        <button class="sel-hl-dot hl-edit-color hl-swatch-sage" data-color="sage" aria-label="Màu xanh dịu" type="button"></button>
+        <button class="sel-hl-dot hl-edit-color hl-swatch-ink" data-color="ink" aria-label="Màu gạch mực" type="button"></button>
+        <button class="sel-hl-dot hl-edit-color hl-swatch-rose" data-color="rose" aria-label="Màu đỏ đất" type="button"></button>
+        <button class="apple-pill-btn secondary small" id="hl-dict-btn" type="button">Tra / Dịch</button>
+      </div>
+      <label for="hl-note-input" class="sr-only">Nội dung ghi chú</label>
+      <textarea id="hl-note-input" rows="3" placeholder="Viết ghi chú hoặc cảm nghĩ của bạn…"></textarea>
+      <div class="modal-footer-row">
+        <button class="text-danger-btn" id="hl-delete-btn" type="button">Xóa highlight</button>
+        <button class="apple-pill-btn" id="hl-save-note-btn" type="button">Lưu ghi chú</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== VOCABULARY MODAL ==================== -->
+  <div id="vocab-backdrop" class="sheet-backdrop"></div>
+  <div id="vocab-modal" class="modal-panel large-modal" role="dialog" aria-modal="true" aria-labelledby="vocab-modal-title">
+    <div class="sheet-header">
+      <h2 id="vocab-modal-title">Sổ từ vựng Anh – Việt</h2>
+      <div class="vocab-header-right">
+        <button class="apple-pill-btn secondary small" id="vocab-export-btn" type="button">Xuất .md</button>
+        <button class="sheet-close-circle" id="vocab-close-btn" type="button" aria-label="Đóng sổ từ vựng">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="vocab-search-wrap">
+      <label for="vocab-search" class="sr-only">Tìm từ vựng đã lưu</label>
+      <input id="vocab-search" type="search" placeholder="Tìm từ vựng đã lưu…" />
+    </div>
+    <div id="vocab-list" class="sheet-content vocab-list"></div>
+  </div>
+
+  <!-- ==================== CONNECT S25 ULTRA & PWA MODAL ==================== -->
+  <div id="connect-backdrop" class="sheet-backdrop"></div>
+  <div id="connect-modal" class="modal-panel large-modal" role="dialog" aria-modal="true" aria-labelledby="connect-modal-title">
+    <div class="sheet-header">
+      <h2 id="connect-modal-title">Mở &amp; Cài lên Samsung S25 Ultra</h2>
+      <button class="sheet-close-circle" id="connect-close-btn" type="button" aria-label="Đóng hướng dẫn kết nối">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-content connect-content">
+      <!-- Native Android App PC Server Config (shown inside APK) -->
+      <div id="native-server-card" class="inset-section hidden">
+        <div class="inset-section-label">Kết nối kho sách PC qua Wi-Fi</div>
+        <div class="inset-group">
+          <div class="inset-row stack-item">
+            <label for="native-server-url-input" class="mini-label">Địa chỉ máy chủ PaperInk trên PC</label>
+            <div class="native-server-row">
+              <input id="native-server-url-input" type="url" placeholder="http://10.123.131.169:3000" />
+              <button class="apple-pill-btn small" id="native-server-save-btn" type="button">Kết nối</button>
+            </div>
+            <p class="setting-hint">Khi bật PC cùng Wi-Fi, app sẽ tự đồng bộ 344 cuốn sách, tiến độ, đánh giá và nét viết S Pen. Ra ngoài không có Wi-Fi vẫn đọc toàn bộ sách đã lưu Offline hoặc nhập trực tiếp file .epub trên S25 Ultra.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Direct Android APK Install Card (shown on PC / Browser when APK is built) -->
+      <div id="apk-download-card" class="qr-card hidden">
+        <strong class="apk-card-title">Cài trực tiếp App Android (.APK) cho Samsung S25 Ultra</strong>
+        <div id="connect-apk-qr" class="qr-box"></div>
+        <a id="download-apk-btn" class="apple-pill-btn" href="/download/PaperInk-S25Ultra.apk" download="PaperInk-S25Ultra.apk">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Tải PaperInk-S25Ultra.apk</span>
+        </a>
+        <p class="setting-hint">Quét mã QR trên bằng camera S25 Ultra để tải và cài đặt App độc lập (không cần trình duyệt).</p>
+      </div>
+
+      <div id="web-connect-card" class="qr-card">
+        <div id="connect-qr" class="qr-box"></div>
+        <div class="qr-url-row">
+          <code id="connect-url-text">http://...</code>
+          <button class="apple-pill-btn secondary small" id="copy-lan-url-btn" type="button">Chép link</button>
+        </div>
+        <button class="apple-pill-btn hidden" id="pwa-install-btn" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Cài đặt ứng dụng PaperInk</span>
+        </button>
+      </div>
+
+      <div class="inset-group guide-group">
+        <div class="inset-row stack-item">
+          <h3>Bước 1 · Mở trên S25 Ultra (cùng mạng Wi-Fi)</h3>
+          <p>Quét mã QR bằng camera S25 Ultra hoặc mở địa chỉ trên bằng <strong>Chrome</strong> / <strong>Samsung Internet</strong>.</p>
+        </div>
+        <div class="inset-row stack-item">
+          <h3>Bước 2 · Cài ra màn hình chính như App thật</h3>
+          <p>Trong Chrome trên S25 Ultra, chạm menu <strong>⋮</strong> và chọn <strong>Thêm vào màn hình chính (Add to Home screen)</strong>.</p>
+        </div>
+        <div class="inset-row stack-item">
+          <h3>Bước 3 · Bật chạy 100% Offline không cần Wi-Fi</h3>
+          <p>Làm 1 lần duy nhất trên Chrome S25 Ultra để trình duyệt bật Service Worker cho địa chỉ nội bộ:</p>
+          <ol>
+            <li>Mở tab mới, nhập <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code></li>
+            <li>Chọn <strong>Enabled</strong> và dán <code id="chrome-flag-origin">http://...</code></li>
+            <li>Nhấn <strong>Relaunch</strong> → Mở lại PaperInk → <strong>⋮ → Cài đặt ứng dụng (Install app)</strong>.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast glass-chrome" role="status" aria-live="polite"></div>
+
+  <script src="/vendor/jszip.min.js"></script>
+  <script src="/js/db.js"></script>
+  <script src="/js/shelf-decor.js"></script>
+  <script src="/js/epub-engine.js"></script>
+  <script src="/js/ink-canvas.js"></script>
+  <script src="/js/dictionary-ui.js"></script>
+  <script src="/js/reader.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

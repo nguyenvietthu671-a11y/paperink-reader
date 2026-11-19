@@ -1,0 +1,1542 @@
+(function () {
+  function uid(prefix = 'id') {
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function formatMinutes(mins) {
+    if (!mins || mins <= 1) return '~1 phút còn lại';
+    if (mins < 60) return `~${mins} phút còn lại`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m > 0 ? `~${h}g ${m}p còn lại` : `~${h} giờ còn lại`;
+  }
+
+  function getWordAndSentenceAtPoint(x, y, rootEl) {
+    let range = null;
+    if (document.caretRangeFromPoint) {
+      range = document.caretRangeFromPoint(x, y);
+    } else if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(x, y);
+      if (pos) {
+        range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+      }
+    }
+    if (!range) return null;
+    const node = range.startContainer;
+    if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+    if (!rootEl.contains(node)) return null;
+
+    // Ensure tap point is actually close to the character rect (not blank whitespace)
+    const text = node.nodeValue || '';
+    const offset = range.startOffset;
+    if (!text.trim()) return null;
+
+    try {
+      const testRange = document.createRange();
+      const s = Math.max(0, Math.min(offset, text.length - 1));
+      testRange.setStart(node, s);
+      testRange.setEnd(node, Math.min(text.length, s + 1));
+      const rect = testRange.getBoundingClientRect();
+      if (
+        rect.width === 0 ||
+        x < rect.left - 18 ||
+        x > rect.right + 18 ||
+        y < rect.top - 16 ||
+        y > rect.bottom + 16
+      ) {
+        return null;
+      }
+    } catch (_) {}
+
+    const isWordChar = (ch) => /[a-zA-Z\u00C0-\u024F\u1E00-\u1EFF'-]/.test(ch);
+    let start = offset;
+    let end = offset;
+    if (start >= text.length && start > 0) start = text.length - 1;
+    if (!isWordChar(text[start]) && start > 0 && isWordChar(text[start - 1])) {
+      start--;
+      end = start;
+    }
+    if (!isWordChar(text[start])) return null;
+
+    while (start > 0 && isWordChar(text[start - 1])) start--;
+    while (end < text.length && isWordChar(text[end])) end++;
+
+    const word = text
+      .slice(start, end)
+      .replace(/^['-]+|['-]+$/g, '')
+      .trim();
+    if (!word || word.length < 2) return null;
+
+    // Grab surrounding sentence from closest block element
+    const block = node.parentElement?.closest('p, li, blockquote, div, h1, h2, h3, h4') || node.parentElement;
+    const blockText = (block?.textContent || text).replace(/\s+/g, ' ').trim();
+    let context = '';
+    const idx = blockText.toLowerCase().indexOf(word.toLowerCase());
+    if (idx !== -1) {
+      const before = blockText.slice(0, idx);
+      const after = blockText.slice(idx);
+      const sentStart = Math.max(
+        before.lastIndexOf('. ') + 2,
+        before.lastIndexOf('! ') + 2,
+        before.lastIndexOf('? ') + 2,
+        0
+      );
+      const endMatch = after.search(/[.!?](\s|$)/);
+      const sentEnd = endMatch === -1 ? Math.min(blockText.length, idx + 160) : idx + endMatch + 1;
+      context = blockText.slice(sentStart, sentEnd).trim().slice(0, 220);
+    }
+
+    return { word, context };
+  }
+
+  class PaperInkReader {
+    constructor(callbacks) {
+      this.cb = callbacks;
+      this.bookMeta = null;
+      this.epub = null;
+      this.chapterIndex = 0;
+      this.currentPage = 0;
+      this.totalPages = 1;
+      this.pageW = 360;
+      this.pageH = 640;
+      this.pageGap = 40;
+      this.hudVisible = false;
+      this.isTransitioning = false;
+      this.previousJumpPos = null;
+      this.pendingSelection = null;
+      this.activeHighlightId = null;
+
+      // DOM elements
+      this.viewEl = document.getElementById('reader-view');
+      this.stageEl = document.getElementById('reader-stage');
+      this.maskEl = document.getElementById('page-mask');
+      this.contentEl = document.getElementById('chapter-content');
+      this.flashEl = document.getElementById('eink-flash');
+      this.curlEl = document.getElementById('page-curl-overlay');
+      this.curlStage = document.getElementById('curl-stage');
+      this.curlTopSheet = document.getElementById('curl-top-sheet');
+      this.curlUnderShadow = document.getElementById('curl-under-shadow');
+      this.curlFlap = document.getElementById('curl-flap');
+      this.dogEarEl = document.getElementById('page-dog-ear');
+
+      // Interactive page-turn drag & animation state
+      this.turnSession = null;
+      this.curlRafId = null;
+
+      // Micro header/footer & reading progress bar
+      this.microHeader = document.getElementById('reader-micro-header');
+      this.microBookTitle = document.getElementById('micro-book-title');
+      this.microChapterTitle = document.getElementById('micro-chapter-title');
+      this.microFooter = document.getElementById('reader-micro-footer');
+      this.microPageInfo = document.getElementById('micro-page-info');
+      this.microProgressInfo = document.getElementById('micro-progress-info');
+      this.progressLineWrap = document.getElementById('reader-progress-line');
+      this.progressLineFill = document.getElementById('reader-progress-fill');
+      this.progressPillWrap = document.getElementById('reader-progress-pill-wrap');
+      this.progressPillFill = document.getElementById('reader-pill-fill');
+      this.progressPillPct = document.getElementById('reader-pill-pct');
+
+      // HUD
+      this.hudTop = document.getElementById('reader-hud-top');
+      this.hudBottom = document.getElementById('reader-hud-bottom');
+      this.hudTitle = document.getElementById('hud-book-title');
+      this.hudSubtitle = document.getElementById('hud-chapter-title');
+      this.bookmarkBtn = document.getElementById('hud-bookmark-btn');
+      this.tapDictBtn = document.getElementById('hud-tapdict-btn');
+      this.scrubber = document.getElementById('reader-scrubber');
+      this.scrubberLabel = document.getElementById('scrubber-label');
+      this.prevChapBtn = document.getElementById('hud-prev-chap');
+      this.nextChapBtn = document.getElementById('hud-next-chap');
+      this.undoJumpBtn = document.getElementById('undo-jump-btn');
+
+      // Selection docked bar
+      this.selBar = document.getElementById('selection-bar');
+      this.hlModal = document.getElementById('highlight-modal');
+      this.hlBackdrop = document.getElementById('highlight-backdrop');
+      this.hlQuoteEl = document.getElementById('hl-modal-quote');
+      this.hlNoteInput = document.getElementById('hl-note-input');
+
+      this.bindEvents();
+    }
+
+    getSettings() {
+      return this.cb.getSettings();
+    }
+
+    isScrollMode() {
+      const s = this.getSettings();
+      return s.readDirection === 'vertical' || (!s.readDirection && s.pageMode === 'scroll');
+    }
+
+    isPenBlockingInput(isTouch = false) {
+      const penState = this.cb.getPenState?.();
+      if (!penState || !penState.active) return false;
+      // When Palm Rejection (sPenOnly) is ON, finger touch STILL navigates pages cleanly!
+      if (isTouch && penState.sPenOnly) return false;
+      return true;
+    }
+
+    getTurnEffect() {
+      const s = this.getSettings();
+      return s.turnEffect || (s.pageMode === 'instant' ? 'instant' : 'curl');
+    }
+
+    bindEvents() {
+      // Interactive Touch Gesture Engine (Live 1:1 Finger-Tracking Apple Curl & Smooth Slide)
+      let startX = 0;
+      let startY = 0;
+      let lastX = 0;
+      let lastMoveTime = 0;
+      let velocityX = 0;
+      let startTime = 0;
+      let pointerActive = false;
+      let gestureMode = 'undecided'; // 'undecided' | 'horizontal' | 'vertical'
+      let dragDir = null;
+
+      this.stageEl.addEventListener(
+        'touchstart',
+        (e) => {
+          if (this.isPenBlockingInput(true)) return;
+          if (e.touches.length !== 1) return;
+          if (this.turnSession?.animating) {
+            this.forceCompleteTurnSession();
+          }
+          pointerActive = true;
+          gestureMode = 'undecided';
+          dragDir = null;
+          startX = lastX = e.touches[0].clientX;
+          startY = e.touches[0].clientY;
+          startTime = lastMoveTime = Date.now();
+          velocityX = 0;
+        },
+        { passive: true }
+      );
+
+      this.stageEl.addEventListener(
+        'touchmove',
+        (e) => {
+          if (!pointerActive || e.touches.length !== 1) return;
+          if (this.isPenBlockingInput(true)) return;
+          if (this.isScrollMode() || !this.epub) return;
+
+          const curX = e.touches[0].clientX;
+          const curY = e.touches[0].clientY;
+          const dx = curX - startX;
+          const dy = curY - startY;
+
+          // Respect active text selection (long press)
+          const selStr = window.getSelection()?.toString();
+          if (selStr && selStr.trim().length > 0) {
+            pointerActive = false;
+            this.cancelTurnSessionImmediate();
+            return;
+          }
+
+          if (gestureMode === 'undecided') {
+            if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+            if (Math.abs(dx) > Math.abs(dy) * 1.15) {
+              gestureMode = 'horizontal';
+              dragDir = dx < 0 ? 'next' : 'prev';
+              const eff = this.getTurnEffect();
+              if (eff === 'curl' || eff === 'slide') {
+                this.beginInteractiveTurn(dragDir, eff);
+              }
+            } else {
+              gestureMode = 'vertical';
+              return;
+            }
+          }
+
+          if (gestureMode !== 'horizontal') return;
+
+          const now = Date.now();
+          const dt = Math.max(1, now - lastMoveTime);
+          velocityX = (curX - lastX) / dt; // px/ms
+          lastX = curX;
+          lastMoveTime = now;
+
+          const eff = this.getTurnEffect();
+          if ((eff === 'curl' || eff === 'slide') && this.turnSession) {
+            e.preventDefault();
+            const stageW = Math.max(1, this.stageEl.getBoundingClientRect().width);
+            if (eff === 'curl') {
+              const rawP = dragDir === 'next' ? -dx / stageW : dx / stageW;
+              this.updateCurlProgress(Math.max(0, Math.min(1, rawP)));
+            } else {
+              this.updateSlideDrag(dx);
+            }
+          }
+        },
+        { passive: false }
+      );
+
+      const handleTouchFinish = (e, cancelled = false) => {
+        if (!pointerActive) return;
+        pointerActive = false;
+        if (this.isPenBlockingInput(true)) {
+          this.cancelTurnSessionImmediate();
+          return;
+        }
+        const touch = e.changedTouches?.[0];
+        const endX = touch ? touch.clientX : lastX;
+        const endY = touch ? touch.clientY : startY;
+        const dx = endX - startX;
+        const dy = endY - startY;
+        const dt = Date.now() - startTime;
+
+        if (gestureMode === 'horizontal' && !this.isScrollMode()) {
+          const eff = this.getTurnEffect();
+          if ((eff === 'curl' || eff === 'slide') && this.turnSession) {
+            const stageW = Math.max(1, this.stageEl.getBoundingClientRect().width);
+            const prog = dragDir === 'next' ? -dx / stageW : dx / stageW;
+            const fastFlick = dragDir === 'next' ? velocityX < -0.32 : velocityX > 0.32;
+            const shouldCommit = !cancelled && (prog > 0.22 || (prog > 0.05 && fastFlick));
+            this.endInteractiveTurn(shouldCommit);
+            return;
+          }
+          // Non-interactive modes (eink / instant): standard swipe threshold
+          if (!cancelled && Math.abs(dx) > 40) {
+            if (dx < 0) this.nextPage();
+            else this.prevPage();
+            return;
+          }
+        }
+
+        this.cancelTurnSessionImmediate();
+
+        // Quick tap
+        if (!cancelled && Math.abs(dx) < 14 && Math.abs(dy) < 14 && dt < 340) {
+          this.handleTap(endX, endY, e.target);
+        }
+      };
+
+      this.stageEl.addEventListener('touchend', (e) => handleTouchFinish(e, false), { passive: true });
+      this.stageEl.addEventListener('touchcancel', (e) => handleTouchFinish(e, true), { passive: true });
+
+      // Desktop mouse edge-drag support for Apple Curl & Smooth Slide (without breaking middle text selection!)
+      let mouseDrag = null;
+      let suppressNextClick = false;
+      this.stageEl.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || this.isScrollMode() || !this.epub || this.isPenBlockingInput(false)) return;
+        const eff = this.getTurnEffect();
+        if (eff !== 'curl' && eff !== 'slide') return;
+        const rect = this.stageEl.getBoundingClientRect();
+        const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
+        // Only start mouse drag curl from outer 22% edges so middle text stays 100% selectable!
+        if (relX > 0.22 && relX < 0.78) return;
+        if (this.turnSession?.animating) this.forceCompleteTurnSession();
+        mouseDrag = {
+          startX: e.clientX,
+          lastX: e.clientX,
+          lastTime: Date.now(),
+          vx: 0,
+          active: false,
+          dir: relX >= 0.78 ? 'next' : 'prev',
+          stageW: Math.max(1, rect.width),
+        };
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!mouseDrag) return;
+        const dx = e.clientX - mouseDrag.startX;
+        if (!mouseDrag.active) {
+          if (Math.abs(dx) < 10) return;
+          const draggedRightDir = (mouseDrag.dir === 'next' && dx < 0) || (mouseDrag.dir === 'prev' && dx > 0);
+          if (!draggedRightDir) {
+            mouseDrag = null;
+            return;
+          }
+          mouseDrag.active = true;
+          suppressNextClick = true;
+          window.getSelection()?.removeAllRanges();
+          this.beginInteractiveTurn(mouseDrag.dir, this.getTurnEffect());
+        }
+        e.preventDefault();
+        const now = Date.now();
+        mouseDrag.vx = (e.clientX - mouseDrag.lastX) / Math.max(1, now - mouseDrag.lastTime);
+        mouseDrag.lastX = e.clientX;
+        mouseDrag.lastTime = now;
+
+        const eff = this.getTurnEffect();
+        if (eff === 'curl') {
+          const p = mouseDrag.dir === 'next' ? -dx / mouseDrag.stageW : dx / mouseDrag.stageW;
+          this.updateCurlProgress(Math.max(0, Math.min(1, p)));
+        } else if (eff === 'slide') {
+          this.updateSlideDrag(dx);
+        }
+      });
+
+      window.addEventListener('mouseup', (e) => {
+        if (!mouseDrag) return;
+        const md = mouseDrag;
+        mouseDrag = null;
+        if (!md.active) return;
+        const dx = e.clientX - md.startX;
+        const prog = md.dir === 'next' ? -dx / md.stageW : dx / md.stageW;
+        const fastFlick = md.dir === 'next' ? md.vx < -0.32 : md.vx > 0.32;
+        this.endInteractiveTurn(prog > 0.2 || (prog > 0.04 && fastFlick));
+        setTimeout(() => {
+          suppressNextClick = false;
+        }, 60);
+      });
+
+      // Mouse click on desktop (ignore if touch just fired or edge-drag just ran or pen drawing active)
+      let lastTouchEnd = 0;
+      this.stageEl.addEventListener(
+        'touchend',
+        () => {
+          lastTouchEnd = Date.now();
+        },
+        { passive: true }
+      );
+
+      this.stageEl.addEventListener('click', (e) => {
+        if (suppressNextClick) return;
+        if (Date.now() - lastTouchEnd < 450) return;
+        if (this.isPenBlockingInput(false)) return;
+        this.handleTap(e.clientX, e.clientY, e.target);
+      });
+
+      // Scroll progress tracking in scroll mode
+      let scrollTimer = null;
+      this.maskEl.addEventListener(
+        'scroll',
+        () => {
+          if (!this.isScrollMode() || !this.epub) return;
+          this.updateProgressUI();
+          clearTimeout(scrollTimer);
+          scrollTimer = setTimeout(() => this.persistProgress(), 350);
+        },
+        { passive: true }
+      );
+
+      // Resize observer for exact pixel pagination on rotation / font change
+      let resizeTimer = null;
+      this.resizeObserver = new ResizeObserver(() => {
+        if (!this.epub || this.viewEl.classList.contains('hidden')) return;
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          const ratio = this.getChapterRatio();
+          this.layoutChapter(ratio);
+        }, 90);
+      });
+      this.resizeObserver.observe(this.maskEl);
+
+      // Text selection listener (for docked S25 Ultra friendly bar)
+      let selTimer = null;
+      document.addEventListener('selectionchange', () => {
+        if (!this.epub || this.viewEl.classList.contains('hidden')) return;
+        clearTimeout(selTimer);
+        selTimer = setTimeout(() => this.onSelectionChange(), 140);
+      });
+
+      // Selection bar actions
+      document.getElementById('sel-dict-btn')?.addEventListener('click', () => {
+        if (!this.pendingSelection) return;
+        const { text, context } = this.pendingSelection;
+        this.clearSelection();
+        this.cb.openDictionary({
+          query: text,
+          context,
+          bookId: this.bookMeta?.id || '',
+          bookTitle: this.bookMeta?.title || '',
+        });
+      });
+
+      document.querySelectorAll('.sel-hl-dot').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const color = btn.dataset.color || 'sepia';
+          this.createHighlightFromSelection(color, false);
+        });
+      });
+
+      document.getElementById('sel-note-btn')?.addEventListener('click', () => {
+        this.createHighlightFromSelection('sepia', true);
+      });
+
+      document.getElementById('sel-copy-btn')?.addEventListener('click', () => {
+        if (!this.pendingSelection) return;
+        navigator.clipboard?.writeText(this.pendingSelection.text).catch(() => {});
+        this.cb.toast('Đã sao chép đoạn văn');
+        this.clearSelection();
+      });
+
+      document.getElementById('sel-close-btn')?.addEventListener('click', () => {
+        this.clearSelection();
+      });
+
+      // Highlight modal controls
+      this.hlBackdrop?.addEventListener('click', () => this.closeHighlightModal());
+      document.getElementById('hl-modal-close')?.addEventListener('click', () => this.closeHighlightModal());
+      document.getElementById('hl-save-note-btn')?.addEventListener('click', () => {
+        if (!this.activeHighlightId || !this.bookMeta) return;
+        const note = this.hlNoteInput.value.trim();
+        this.cb.updateHighlight(this.bookMeta.id, this.activeHighlightId, { note });
+        this.cb.toast('Đã lưu ghi chú');
+        this.closeHighlightModal();
+      });
+      document.getElementById('hl-delete-btn')?.addEventListener('click', () => {
+        if (!this.activeHighlightId || !this.bookMeta) return;
+        this.cb.deleteHighlight(this.bookMeta.id, this.activeHighlightId);
+        this.closeHighlightModal();
+        this.reRenderHighlights();
+        this.cb.toast('Đã xóa highlight');
+      });
+      document.getElementById('hl-dict-btn')?.addEventListener('click', () => {
+        const hl = this.getActiveHighlight();
+        if (!hl) return;
+        this.closeHighlightModal();
+        this.cb.openDictionary({
+          query: hl.text,
+          context: hl.text,
+          bookId: this.bookMeta?.id || '',
+          bookTitle: this.bookMeta?.title || '',
+        });
+      });
+      document.querySelectorAll('.hl-edit-color').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (!this.activeHighlightId || !this.bookMeta) return;
+          const color = btn.dataset.color || 'sepia';
+          this.cb.updateHighlight(this.bookMeta.id, this.activeHighlightId, { color });
+          this.reRenderHighlights();
+          this.syncHighlightModalColors(color);
+        });
+      });
+
+      // HUD navigation buttons
+      this.prevChapBtn?.addEventListener('click', () => {
+        if (this.chapterIndex > 0) {
+          this.recordJumpPoint();
+          this.goToChapter(this.chapterIndex - 1, 0);
+        }
+      });
+
+      this.nextChapBtn?.addEventListener('click', () => {
+        if (this.epub && this.chapterIndex < this.epub.spine.length - 1) {
+          this.recordJumpPoint();
+          this.goToChapter(this.chapterIndex + 1, 0);
+        }
+      });
+
+      this.scrubber?.addEventListener('input', () => {
+        if (!this.epub) return;
+        const val = parseFloat(this.scrubber.value);
+        if (this.isScrollMode()) {
+          this.scrubberLabel.textContent = `${Math.round(val)}% chương này`;
+        } else {
+          const p = Math.max(0, Math.min(this.totalPages - 1, Math.round(val)));
+          this.scrubberLabel.textContent = `Trang ${p + 1} / ${this.totalPages}`;
+        }
+      });
+
+      this.scrubber?.addEventListener('change', () => {
+        if (!this.epub) return;
+        this.recordJumpPoint();
+        const val = parseFloat(this.scrubber.value);
+        if (this.isScrollMode()) {
+          const maxScroll = Math.max(0, this.maskEl.scrollHeight - this.maskEl.clientHeight);
+          this.maskEl.scrollTop = (val / 100) * maxScroll;
+          this.updateProgressUI();
+          this.persistProgress();
+        } else {
+          this.goToPage(Math.round(val), false);
+        }
+      });
+
+      this.bookmarkBtn?.addEventListener('click', () => this.toggleBookmarkAtCurrent());
+
+      this.undoJumpBtn?.addEventListener('click', () => {
+        if (!this.previousJumpPos) return;
+        const prev = this.previousJumpPos;
+        this.previousJumpPos = null;
+        this.undoJumpBtn.classList.add('hidden');
+        this.goToChapter(prev.chapterIndex, prev.ratio);
+      });
+
+      // Keyboard controls for desktop
+      document.addEventListener('keydown', (e) => {
+        if (!this.epub || this.viewEl.classList.contains('hidden')) return;
+        if (e.target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+        if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
+          if (!this.isScrollMode()) {
+            e.preventDefault();
+            this.nextPage();
+          }
+        } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+          if (!this.isScrollMode()) {
+            e.preventDefault();
+            this.prevPage();
+          }
+        } else if (e.key === 'b' || e.key === 'B') {
+          this.toggleBookmarkAtCurrent();
+        } else if (e.key === 'Escape') {
+          if (this.hlModal?.classList.contains('open')) this.closeHighlightModal();
+          else if (this.hudVisible) this.setHudVisible(false);
+        }
+      });
+    }
+
+    handleTap(clientX, clientY, target) {
+      // If user has an active selection, let browser clear it without turning pages
+      const sel = window.getSelection();
+      if (sel && sel.toString().trim().length > 0) {
+        return;
+      }
+
+      // Check highlight tap
+      const hlMark = target?.closest?.('mark.pi-hl');
+      if (hlMark) {
+        const hlId = hlMark.dataset.hlId;
+        if (hlId) {
+          this.openHighlightModal(hlId);
+          return;
+        }
+      }
+
+      // Check internal EPUB link tap
+      const epubLink = target?.closest?.('a[data-epub-spine]');
+      if (epubLink) {
+        const spineIdx = parseInt(epubLink.dataset.epubSpine, 10);
+        const frag = epubLink.dataset.epubFrag || '';
+        if (!Number.isNaN(spineIdx)) {
+          this.recordJumpPoint();
+          this.goToChapter(spineIdx, 0, frag);
+          return;
+        }
+      }
+
+      const rect = this.stageEl.getBoundingClientRect();
+      const relX = (clientX - rect.left) / Math.max(1, rect.width);
+
+      // If HUD is visible, tapping center closes HUD cleanly
+      if (this.hudVisible) {
+        this.setHudVisible(false);
+        return;
+      }
+
+      // If Tap-to-Dict mode is ON, tapping a word in central 72% triggers Anh-Việt dictionary
+      const settings = this.getSettings();
+      if (settings.tapDict && relX > 0.14 && relX < 0.86) {
+        const hit = getWordAndSentenceAtPoint(clientX, clientY, this.contentEl);
+        if (hit) {
+          this.cb.openDictionary({
+            query: hit.word,
+            context: hit.context,
+            bookId: this.bookMeta?.id || '',
+            bookTitle: this.bookMeta?.title || '',
+          });
+          return;
+        }
+      }
+
+      if (this.isScrollMode()) {
+        // In scroll mode, center tap toggles HUD
+        this.setHudVisible(!this.hudVisible);
+        return;
+      }
+
+      // Kindle tap zones: left 28% prev, right 28% next, center 44% HUD
+      if (relX <= 0.28) {
+        this.prevPage();
+      } else if (relX >= 0.72) {
+        this.nextPage();
+      } else {
+        this.setHudVisible(!this.hudVisible);
+      }
+    }
+
+    setHudVisible(visible) {
+      this.hudVisible = Boolean(visible);
+      this.hudTop.classList.toggle('visible', this.hudVisible);
+      this.hudBottom.classList.toggle('visible', this.hudVisible);
+      if (this.hudVisible) {
+        this.updateScrubber();
+      }
+    }
+
+    async openBook(bookMeta, epubBlob, savedProgress) {
+      this.closeBook();
+      this.bookMeta = bookMeta;
+      this.viewEl.classList.remove('hidden');
+      this.contentEl.innerHTML = '<div class="chapter-loading">Đang mở sách…</div>';
+      this.hudTitle.textContent = bookMeta.title || 'Đang đọc';
+      this.microBookTitle.textContent = bookMeta.title || '';
+      this.setHudVisible(false);
+
+      this.epub = await window.PaperInkEpub.loadFromBlob(epubBlob);
+
+      // Restore saved reading position or start at first meaningful chapter
+      let startChap = 0;
+      let startRatio = 0;
+      if (savedProgress && typeof savedProgress.chapterIndex === 'number') {
+        startChap = Math.max(0, Math.min(this.epub.spine.length - 1, savedProgress.chapterIndex));
+        startRatio = Math.max(0, Math.min(0.999, savedProgress.progressRatio || 0));
+      }
+
+      this.applyVisualMode();
+      await this.goToChapter(startChap, startRatio);
+      this.startReadingTimer();
+    }
+
+    startReadingTimer() {
+      this.stopReadingTimer();
+      this._readingTimer = setInterval(() => {
+        if (!this.epub || document.visibilityState !== 'visible') return;
+        this.cb.onReadingActivity?.({ minutesDelta: 0.5, pagesDelta: 0 });
+      }, 30000);
+    }
+
+    stopReadingTimer() {
+      if (this._readingTimer) {
+        clearInterval(this._readingTimer);
+        this._readingTimer = null;
+      }
+    }
+
+    closeBook() {
+      this.cancelTurnSessionImmediate();
+      this.stopReadingTimer();
+      this.clearSelection();
+      this.closeHighlightModal();
+      this.setHudVisible(false);
+      this.cb.onBookClosed?.();
+      if (this.epub) {
+        this.persistProgress();
+        this.epub.destroy();
+        this.epub = null;
+      }
+      this.bookMeta = null;
+      this.previousJumpPos = null;
+      this.undoJumpBtn?.classList.add('hidden');
+      this.contentEl.innerHTML = '';
+      this.viewEl.classList.add('hidden');
+    }
+
+    applyVisualMode() {
+      const s = this.getSettings();
+      const scroll = this.isScrollMode();
+      const progStyle = s.progressStyle || (s.showHeaderFooter === false ? 'hidden' : 'line');
+      const turnEffect = s.turnEffect || (s.pageMode === 'instant' ? 'instant' : 'eink');
+
+      this.stageEl.classList.toggle('mode-scroll', scroll);
+      this.stageEl.classList.toggle('mode-paginated', !scroll);
+      this.contentEl.classList.toggle('turn-slide', !scroll && turnEffect === 'slide');
+
+      this.microHeader.classList.toggle('hidden', !s.showHeaderFooter);
+      this.microFooter.classList.toggle('hidden', progStyle === 'hidden');
+      this.progressLineWrap?.classList.toggle('hidden', progStyle !== 'line');
+      this.progressPillWrap?.classList.toggle('hidden', progStyle !== 'pill');
+
+      if (this.tapDictBtn) {
+        const isTap = Boolean(s.tapDict);
+        this.tapDictBtn.classList.toggle('active', isTap);
+        this.tapDictBtn.setAttribute('aria-pressed', String(isTap));
+      }
+      if (this.epub) {
+        const ratio = this.getChapterRatio();
+        requestAnimationFrame(() => this.layoutChapter(ratio));
+      }
+    }
+
+    getCurrentPageKey() {
+      if (this.isScrollMode()) return `ch${this.chapterIndex}_scroll`;
+      return `ch${this.chapterIndex}_p${this.currentPage}`;
+    }
+
+    notifyPageChanged() {
+      if (!this.epub || !this.bookMeta) return;
+      const chap = this.epub.spine[this.chapterIndex];
+      this.cb.onPageChanged?.({
+        bookId: this.bookMeta.id,
+        pageKey: this.getCurrentPageKey(),
+        meta: {
+          chapterIndex: this.chapterIndex,
+          chapterTitle: chap?.title || `Chương ${this.chapterIndex + 1}`,
+          pageLabel: this.isScrollMode()
+            ? 'Cuộn dọc'
+            : `Trang ${this.currentPage + 1}/${this.totalPages}`,
+          progressRatio: this.getChapterRatio(),
+        },
+      });
+    }
+
+    recordJumpPoint() {
+      if (!this.epub) return;
+      this.previousJumpPos = {
+        chapterIndex: this.chapterIndex,
+        ratio: this.getChapterRatio(),
+      };
+      this.undoJumpBtn?.classList.remove('hidden');
+      clearTimeout(this._undoTimer);
+      this._undoTimer = setTimeout(() => {
+        this.undoJumpBtn?.classList.add('hidden');
+      }, 8000);
+    }
+
+    async goToChapter(index, targetRatio = 0, fragmentId = '', turnDir = null) {
+      if (!this.epub || this.isTransitioning) return;
+      const clamped = Math.max(0, Math.min(this.epub.spine.length - 1, index));
+      this.isTransitioning = true;
+      try {
+        this.clearSelection();
+        this.chapterIndex = clamped;
+        const chapter = await this.epub.loadChapter(clamped);
+        if (!chapter) return;
+
+        // Disable slide transition momentarily during chapter swap
+        this.contentEl.classList.add('no-turn-anim');
+        this.contentEl.innerHTML = chapter.html || '<p></p>';
+        this.contentEl.style.transform = 'translate3d(0, 0, 0)';
+        this.maskEl.scrollTop = 0;
+
+        this.hudSubtitle.textContent = chapter.title;
+        this.microChapterTitle.textContent = chapter.title;
+
+        this.reRenderHighlights();
+
+        const imgs = Array.from(this.contentEl.querySelectorAll('img'));
+        if (imgs.length > 0) {
+          await Promise.race([
+            Promise.all(
+              imgs.map((img) =>
+                img.complete
+                  ? Promise.resolve()
+                  : new Promise((res) => {
+                      img.onload = res;
+                      img.onerror = res;
+                    })
+              )
+            ),
+            new Promise((res) => setTimeout(res, 600)),
+          ]);
+        }
+
+        this.layoutChapter(targetRatio, fragmentId);
+        requestAnimationFrame(() => this.contentEl.classList.remove('no-turn-anim'));
+        if (turnDir) this.triggerTurnEffect(turnDir);
+        this.persistProgress();
+      } finally {
+        this.isTransitioning = false;
+      }
+    }
+
+    layoutChapter(targetRatio = 0, fragmentId = '') {
+      if (!this.epub) return;
+      const scroll = this.isScrollMode();
+
+      if (scroll) {
+        this.contentEl.style.removeProperty('--page-w');
+        this.contentEl.style.removeProperty('--page-h');
+        this.contentEl.style.removeProperty('--page-gap');
+        this.contentEl.style.transform = 'none';
+        this.totalPages = 1;
+        this.currentPage = 0;
+
+        if (fragmentId) {
+          const anchor = this.contentEl.querySelector(`[id="${CSS.escape(fragmentId)}"]`);
+          if (anchor) anchor.scrollIntoView({ behavior: 'auto', block: 'start' });
+        } else {
+          const maxScroll = Math.max(0, this.maskEl.scrollHeight - this.maskEl.clientHeight);
+          this.maskEl.scrollTop = Math.round(maxScroll * Math.max(0, Math.min(1, targetRatio)));
+        }
+        this.updateProgressUI();
+        this.notifyPageChanged();
+        return;
+      }
+
+      const rect = this.maskEl.getBoundingClientRect();
+      this.pageW = Math.max(200, Math.floor(rect.width));
+      this.pageH = Math.max(200, Math.floor(rect.height));
+      this.pageGap = 40;
+
+      this.contentEl.classList.add('no-turn-anim');
+      this.contentEl.style.transform = 'translate3d(0, 0, 0)';
+      this.contentEl.style.setProperty('--page-w', `${this.pageW}px`);
+      this.contentEl.style.setProperty('--page-h', `${this.pageH}px`);
+      this.contentEl.style.setProperty('--page-gap', `${this.pageGap}px`);
+
+      const stride = this.pageW + this.pageGap;
+      const totalWidth = this.contentEl.scrollWidth;
+      this.totalPages = Math.max(1, Math.round((totalWidth + this.pageGap) / stride));
+
+      let targetPage = 0;
+      if (fragmentId) {
+        const anchor = this.contentEl.querySelector(`[id="${CSS.escape(fragmentId)}"]`);
+        if (anchor) {
+          const contentLeft = this.contentEl.getBoundingClientRect().left;
+          const anchorLeft = anchor.getBoundingClientRect().left;
+          const relOffset = Math.max(0, anchorLeft - contentLeft);
+          targetPage = Math.max(0, Math.min(this.totalPages - 1, Math.floor(relOffset / stride)));
+        }
+      } else if (targetRatio === 'last') {
+        targetPage = this.totalPages - 1;
+      } else {
+        targetPage = Math.max(
+          0,
+          Math.min(this.totalPages - 1, Math.floor(targetRatio * this.totalPages))
+        );
+      }
+
+      this.currentPage = targetPage;
+      this.contentEl.style.transform = `translate3d(${-this.currentPage * stride}px, 0, 0)`;
+      requestAnimationFrame(() => this.contentEl.classList.remove('no-turn-anim'));
+      this.updateProgressUI();
+      this.notifyPageChanged();
+    }
+
+    // ==================== INTERACTIVE APPLE BOOKS 2-PAGE CURL & SMOOTH SLIDE ENGINE ====================
+    beginInteractiveTurn(dir, effect) {
+      if (!this.epub || this.isScrollMode()) return;
+      this.cancelTurnSessionImmediate();
+
+      const stride = this.pageW + this.pageGap;
+      const canStepInChapter = dir === 'next' ? this.currentPage < this.totalPages - 1 : this.currentPage > 0;
+      const hasNeighborChapter =
+        dir === 'next' ? this.chapterIndex < this.epub.spine.length - 1 : this.chapterIndex > 0;
+      const blocked = !canStepInChapter && !hasNeighborChapter;
+      const targetPage = canStepInChapter ? (dir === 'next' ? this.currentPage + 1 : this.currentPage - 1) : null;
+
+      this.turnSession = {
+        dir,
+        effect,
+        canStepInChapter,
+        hasNeighborChapter,
+        blocked,
+        origPage: this.currentPage,
+        targetPage,
+        stride,
+        progress: 0,
+        animating: false,
+      };
+
+      if (effect === 'slide') {
+        this.contentEl.classList.add('no-turn-anim');
+        return;
+      }
+
+      if (effect === 'curl' && this.curlStage && this.curlTopSheet) {
+        const stageRect = this.stageEl.getBoundingClientRect();
+        const maskRect = this.maskEl.getBoundingClientRect();
+        const padLeft = Math.max(0, maskRect.left - stageRect.left);
+        const padTop = Math.max(0, maskRect.top - stageRect.top);
+        const maskW = Math.max(1, maskRect.width);
+        const maskH = Math.max(1, maskRect.height);
+
+        // Clone the rendered chapter columns once for zero-flicker 2-page reveal!
+        const clone = this.contentEl.cloneNode(true);
+        clone.removeAttribute('id');
+        clone.classList.add('no-turn-anim');
+        clone.style.setProperty('--page-w', `${this.pageW}px`);
+        clone.style.setProperty('--page-h', `${this.pageH}px`);
+        clone.style.setProperty('--page-gap', `${this.pageGap}px`);
+
+        const innerMask = document.createElement('div');
+        innerMask.className = 'curl-page-mask';
+        innerMask.style.left = `${padLeft}px`;
+        innerMask.style.top = `${padTop}px`;
+        innerMask.style.width = `${maskW}px`;
+        innerMask.style.height = `${maskH}px`;
+
+        if (dir === 'next') {
+          // Top sheet shows CURRENT page peeling away; underneath reveals NEXT page!
+          clone.style.transform = `translate3d(${-this.currentPage * stride}px, 0, 0)`;
+          innerMask.appendChild(clone);
+          if (canStepInChapter) {
+            this.contentEl.classList.add('no-turn-anim');
+            this.contentEl.style.transform = `translate3d(${-targetPage * stride}px, 0, 0)`;
+            this.curlStage.classList.remove('chapter-boundary');
+          } else {
+            this.curlStage.classList.add('chapter-boundary');
+          }
+        } else {
+          // Underneath stays on CURRENT page; top sheet peels PREVIOUS page back in from left!
+          if (canStepInChapter) {
+            clone.style.transform = `translate3d(${-targetPage * stride}px, 0, 0)`;
+            innerMask.appendChild(clone);
+            this.curlStage.classList.remove('chapter-boundary');
+          } else {
+            const note = document.createElement('div');
+            note.className = 'curl-boundary-hint';
+            note.textContent = hasNeighborChapter ? 'Chương trước' : 'Đầu sách';
+            innerMask.appendChild(note);
+            this.curlStage.classList.remove('chapter-boundary');
+          }
+        }
+
+        this.curlTopSheet.innerHTML = '';
+        this.curlTopSheet.appendChild(innerMask);
+        this.curlStage.classList.remove('hidden');
+        this.updateCurlProgress(0);
+      }
+    }
+
+    updateCurlProgress(rawProgress) {
+      const s = this.turnSession;
+      if (!s || s.effect !== 'curl' || !this.curlStage) return;
+
+      // Apply soft physical resistance when at the very start/end of the book
+      const p = s.blocked
+        ? Math.min(0.14, rawProgress * 0.28)
+        : Math.max(0, Math.min(1, rawProgress));
+      s.progress = p;
+
+      const W = Math.max(1, this.stageEl.getBoundingClientRect().width);
+      // dir === 'next': fold moves right (W) -> left (0)
+      // dir === 'prev': fold moves left (0) -> right (W)
+      const foldX = s.dir === 'next' ? W * (1 - p) : W * p;
+
+      // Clip top sheet smoothly at exact fold line
+      const clipRight = Math.max(0, W - foldX);
+      this.curlTopSheet.style.clipPath = `inset(0 ${clipRight.toFixed(1)}px 0 0)`;
+
+      // Curved cylindrical paper backside flap immediately to the left of foldX
+      const env = Math.sin(p * Math.PI);
+      const maxEdgeRoom = s.dir === 'next' ? Math.max(0, W - foldX) : Math.max(0, foldX);
+      const flapW = Math.min(W * 0.36 * env, maxEdgeRoom + 18 * env, foldX + 4);
+      const safeFlapW = Math.max(0, flapW);
+
+      if (this.curlFlap) {
+        this.curlFlap.style.width = `${safeFlapW.toFixed(1)}px`;
+        this.curlFlap.style.transform = `translate3d(${(foldX - safeFlapW).toFixed(1)}px, 0, 0)`;
+        this.curlFlap.style.opacity = safeFlapW > 1 ? '1' : '0';
+      }
+
+      if (this.curlUnderShadow) {
+        const shadowW = Math.max(0, 14 + env * 74);
+        this.curlUnderShadow.style.width = `${shadowW.toFixed(1)}px`;
+        this.curlUnderShadow.style.transform = `translate3d(${foldX.toFixed(1)}px, 0, 0)`;
+        this.curlUnderShadow.style.opacity = String((env * 0.88).toFixed(3));
+      }
+    }
+
+    updateSlideDrag(dx) {
+      const s = this.turnSession;
+      if (!s || s.effect !== 'slide') return;
+      const base = -s.origPage * s.stride;
+      const dampedDx = s.canStepInChapter ? dx : dx * 0.32;
+      this.contentEl.style.transform = `translate3d(${(base + dampedDx).toFixed(1)}px, 0, 0)`;
+      const W = Math.max(1, this.stageEl.getBoundingClientRect().width);
+      s.progress = Math.max(0, Math.min(1, (s.dir === 'next' ? -dx : dx) / W));
+    }
+
+    endInteractiveTurn(shouldCommit) {
+      const s = this.turnSession;
+      if (!s) return;
+
+      const commit = Boolean(shouldCommit && !s.blocked);
+      if (s.blocked && shouldCommit) {
+        this.cb.toast(s.dir === 'next' ? 'Bạn đã đọc đến trang cuối của cuốn sách!' : 'Đang ở trang đầu tiên');
+      }
+
+      if (s.effect === 'slide') {
+        this.contentEl.classList.remove('no-turn-anim');
+        void this.contentEl.offsetWidth;
+        if (commit && s.canStepInChapter) {
+          this.currentPage = s.targetPage;
+          this.contentEl.style.transform = `translate3d(${-this.currentPage * s.stride}px, 0, 0)`;
+          this.turnSession = null;
+          this.updateProgressUI();
+          this.notifyPageChanged();
+          this.persistProgress();
+          this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+        } else if (commit && s.hasNeighborChapter) {
+          this.turnSession = null;
+          if (s.dir === 'next') this.goToChapter(this.chapterIndex + 1, 0, '', 'next');
+          else this.goToChapter(this.chapterIndex - 1, 'last', '', 'prev');
+          this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+        } else {
+          // Spring back smoothly to original page
+          this.contentEl.style.transform = `translate3d(${-s.origPage * s.stride}px, 0, 0)`;
+          this.turnSession = null;
+        }
+        return;
+      }
+
+      if (s.effect === 'curl') {
+        const fromP = s.progress;
+        const toP = commit ? 1 : 0;
+        const dist = Math.abs(toP - fromP);
+        const duration = Math.max(180, Math.min(480, Math.round(dist * 480)));
+        this.animateCurlTween(fromP, toP, duration, commit);
+      }
+    }
+
+    animateCurlTween(fromP, toP, duration, commit) {
+      const s = this.turnSession;
+      if (!s) return;
+      s.animating = true;
+      s.pendingCommit = commit;
+      const startTime = performance.now();
+
+      const step = (now) => {
+        if (!this.turnSession) return;
+        const t = Math.min(1, (now - startTime) / Math.max(1, duration));
+        // Silky cubic ease-out like Apple Books iOS spring deceleration
+        const eased = 1 - Math.pow(1 - t, 3);
+        const curP = fromP + (toP - fromP) * eased;
+        this.updateCurlProgress(curP);
+
+        if (t < 1) {
+          this.curlRafId = requestAnimationFrame(step);
+        } else {
+          this.curlRafId = null;
+          this.finalizeCurlSession(commit);
+        }
+      };
+
+      cancelAnimationFrame(this.curlRafId);
+      this.curlRafId = requestAnimationFrame(step);
+    }
+
+    finalizeCurlSession(commit) {
+      const s = this.turnSession;
+      this.turnSession = null;
+      if (!s) return;
+
+      if (commit && s.canStepInChapter) {
+        this.currentPage = s.targetPage;
+        this.contentEl.classList.add('no-turn-anim');
+        this.contentEl.style.transform = `translate3d(${-this.currentPage * s.stride}px, 0, 0)`;
+        this.cleanupCurlDOM();
+        requestAnimationFrame(() => this.contentEl.classList.remove('no-turn-anim'));
+        this.updateProgressUI();
+        this.notifyPageChanged();
+        this.persistProgress();
+        this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+      } else if (commit && s.hasNeighborChapter) {
+        this.cleanupCurlDOM();
+        if (s.dir === 'next') this.goToChapter(this.chapterIndex + 1, 0, '', 'next');
+        else this.goToChapter(this.chapterIndex - 1, 'last', '', 'prev');
+        this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+      } else {
+        // Restore original page cleanly
+        this.contentEl.classList.add('no-turn-anim');
+        this.contentEl.style.transform = `translate3d(${-s.origPage * s.stride}px, 0, 0)`;
+        this.cleanupCurlDOM();
+        requestAnimationFrame(() => this.contentEl.classList.remove('no-turn-anim'));
+      }
+    }
+
+    cleanupCurlDOM() {
+      if (this.curlStage) {
+        this.curlStage.classList.add('hidden');
+        this.curlStage.classList.remove('chapter-boundary');
+      }
+      if (this.curlTopSheet) {
+        this.curlTopSheet.innerHTML = '';
+        this.curlTopSheet.style.clipPath = '';
+      }
+      if (this.curlFlap) {
+        this.curlFlap.style.width = '0px';
+        this.curlFlap.style.opacity = '0';
+      }
+      if (this.curlUnderShadow) {
+        this.curlUnderShadow.style.opacity = '0';
+      }
+    }
+
+    forceCompleteTurnSession() {
+      cancelAnimationFrame(this.curlRafId);
+      this.curlRafId = null;
+      if (!this.turnSession) return;
+      if (this.turnSession.effect === 'curl') {
+        this.finalizeCurlSession(Boolean(this.turnSession.pendingCommit));
+      } else {
+        this.turnSession = null;
+      }
+    }
+
+    cancelTurnSessionImmediate() {
+      cancelAnimationFrame(this.curlRafId);
+      this.curlRafId = null;
+      const s = this.turnSession;
+      this.turnSession = null;
+      if (s && s.effect === 'curl') {
+        this.contentEl.classList.add('no-turn-anim');
+        this.contentEl.style.transform = `translate3d(${-s.origPage * s.stride}px, 0, 0)`;
+        this.cleanupCurlDOM();
+        requestAnimationFrame(() => this.contentEl.classList.remove('no-turn-anim'));
+      } else {
+        this.cleanupCurlDOM();
+      }
+    }
+
+    animateAutoCurl(dir) {
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        return false;
+      }
+      this.beginInteractiveTurn(dir, 'curl');
+      if (!this.turnSession || this.turnSession.blocked) {
+        this.cancelTurnSessionImmediate();
+        return false;
+      }
+      this.animateCurlTween(0, 1, 490, true);
+      return true;
+    }
+
+    goToPage(pageIdx, withEffect = true, turnDir = 'next') {
+      if (!this.epub || this.isScrollMode()) return;
+      const clamped = Math.max(0, Math.min(this.totalPages - 1, pageIdx));
+      this.currentPage = clamped;
+      const stride = this.pageW + this.pageGap;
+      this.contentEl.style.transform = `translate3d(${-this.currentPage * stride}px, 0, 0)`;
+      if (withEffect) this.triggerTurnEffect(turnDir);
+      this.updateProgressUI();
+      this.notifyPageChanged();
+      this.persistProgress();
+    }
+
+    nextPage() {
+      if (!this.epub || this.isScrollMode()) return;
+      if (this.turnSession?.animating) this.forceCompleteTurnSession();
+      const eff = this.getTurnEffect();
+
+      if (this.currentPage < this.totalPages - 1) {
+        if (eff === 'curl' && this.animateAutoCurl('next')) return;
+        this.goToPage(this.currentPage + 1, true, 'next');
+        this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+      } else if (this.chapterIndex < this.epub.spine.length - 1) {
+        if (eff === 'curl' && this.animateAutoCurl('next')) return;
+        this.goToChapter(this.chapterIndex + 1, 0, '', 'next');
+        this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+      } else {
+        this.cb.toast('Bạn đã đọc đến trang cuối của cuốn sách!');
+      }
+    }
+
+    prevPage() {
+      if (!this.epub || this.isScrollMode()) return;
+      if (this.turnSession?.animating) this.forceCompleteTurnSession();
+      const eff = this.getTurnEffect();
+
+      if (this.currentPage > 0) {
+        if (eff === 'curl' && this.animateAutoCurl('prev')) return;
+        this.goToPage(this.currentPage - 1, true, 'prev');
+        this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+      } else if (this.chapterIndex > 0) {
+        if (eff === 'curl' && this.animateAutoCurl('prev')) return;
+        this.goToChapter(this.chapterIndex - 1, 'last', '', 'prev');
+        this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+      } else {
+        this.cb.toast('Đang ở trang đầu tiên');
+      }
+    }
+
+    triggerTurnEffect(dir = 'next') {
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+      const effect = this.getTurnEffect();
+
+      if (effect === 'eink' && this.flashEl) {
+        this.flashEl.classList.remove('active');
+        void this.flashEl.offsetWidth;
+        this.flashEl.classList.add('active');
+      }
+    }
+
+    getChapterRatio() {
+      if (!this.epub) return 0;
+      if (this.isScrollMode()) {
+        const maxScroll = Math.max(1, this.maskEl.scrollHeight - this.maskEl.clientHeight);
+        return Math.max(0, Math.min(1, this.maskEl.scrollTop / maxScroll));
+      }
+      if (this.totalPages <= 1) return 0;
+      return this.currentPage / this.totalPages;
+    }
+
+    updateProgressUI() {
+      if (!this.epub) return;
+      const ratio = this.getChapterRatio();
+      const bookPct = this.epub.getBookPercent(this.chapterIndex, ratio);
+      const minsLeft = this.epub.getEstimatedMinutesLeft(this.chapterIndex, ratio);
+
+      if (this.isScrollMode()) {
+        this.microPageInfo.textContent = `Chương ${this.chapterIndex + 1} / ${this.epub.spine.length}`;
+      } else {
+        this.microPageInfo.textContent = `Trang ${this.currentPage + 1} / ${this.totalPages}`;
+      }
+      this.microProgressInfo.textContent = `${bookPct.toFixed(1)}% · ${formatMinutes(minsLeft)}`;
+      this.progressLineFill.style.width = `${bookPct.toFixed(2)}%`;
+      if (this.progressPillFill) this.progressPillFill.style.width = `${bookPct.toFixed(2)}%`;
+      if (this.progressPillPct) this.progressPillPct.textContent = `${Math.round(bookPct)}%`;
+
+      this.updateScrubber();
+      this.updateBookmarkIndicator();
+    }
+
+    updateScrubber() {
+      if (!this.epub || !this.scrubber) return;
+      if (this.isScrollMode()) {
+        const pct = Math.round(this.getChapterRatio() * 100);
+        this.scrubber.min = '0';
+        this.scrubber.max = '100';
+        this.scrubber.value = String(pct);
+        this.scrubberLabel.textContent = `${pct}% chương này`;
+      } else {
+        this.scrubber.min = '0';
+        this.scrubber.max = String(Math.max(0, this.totalPages - 1));
+        this.scrubber.value = String(this.currentPage);
+        this.scrubberLabel.textContent = `Trang ${this.currentPage + 1} / ${this.totalPages}`;
+      }
+    }
+
+    getCurrentVisibleSnippet() {
+      const text = (this.contentEl.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!text) return '';
+      const approxIdx = Math.floor(text.length * this.getChapterRatio());
+      return text.slice(approxIdx, approxIdx + 95).trim();
+    }
+
+    persistProgress() {
+      if (!this.epub || !this.bookMeta) return;
+      const ratio = this.getChapterRatio();
+      const bookPct = this.epub.getBookPercent(this.chapterIndex, ratio);
+      const minsLeft = this.epub.getEstimatedMinutesLeft(this.chapterIndex, ratio);
+      const chap = this.epub.spine[this.chapterIndex];
+      this.cb.saveProgress(this.bookMeta.id, {
+        chapterIndex: this.chapterIndex,
+        totalChapters: this.epub.spine.length,
+        chapterTitle: chap?.title || `Chương ${this.chapterIndex + 1}`,
+        progressRatio: ratio,
+        bookPercent: Number(bookPct.toFixed(2)),
+        estimatedMinsLeft: minsLeft,
+        snippet: this.getCurrentVisibleSnippet(),
+        updatedAt: Date.now(),
+      });
+    }
+
+    // ---- Bookmarks ----
+    findMatchingBookmark() {
+      if (!this.bookMeta) return null;
+      const list = this.cb.getBookmarks(this.bookMeta.id);
+      const ratio = this.getChapterRatio();
+      const threshold = this.isScrollMode() ? 0.04 : Math.max(0.03, 0.85 / Math.max(1, this.totalPages));
+      return list.find(
+        (b) => b.chapterIndex === this.chapterIndex && Math.abs((b.progressRatio || 0) - ratio) <= threshold
+      );
+    }
+
+    updateBookmarkIndicator() {
+      const matched = this.findMatchingBookmark();
+      const isBm = Boolean(matched);
+      this.dogEarEl?.classList.toggle('active', isBm);
+      if (this.bookmarkBtn) {
+        this.bookmarkBtn.classList.toggle('active', isBm);
+        this.bookmarkBtn.setAttribute('aria-pressed', String(isBm));
+      }
+    }
+
+    toggleBookmarkAtCurrent() {
+      if (!this.epub || !this.bookMeta) return;
+      const existing = this.findMatchingBookmark();
+      if (existing) {
+        this.cb.deleteBookmark(this.bookMeta.id, existing.id);
+        this.cb.toast('Đã gỡ dấu trang');
+      } else {
+        const chap = this.epub.spine[this.chapterIndex];
+        this.cb.addBookmark(this.bookMeta.id, {
+          id: uid('bm'),
+          chapterIndex: this.chapterIndex,
+          chapterTitle: chap?.title || `Chương ${this.chapterIndex + 1}`,
+          progressRatio: this.getChapterRatio(),
+          pageLabel: this.isScrollMode()
+            ? `${Math.round(this.getChapterRatio() * 100)}%`
+            : `Trang ${this.currentPage + 1}/${this.totalPages}`,
+          snippet: this.getCurrentVisibleSnippet(),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        this.cb.toast('Đã đánh dấu trang này');
+      }
+      this.updateBookmarkIndicator();
+    }
+
+    // ---- Selection & Highlights ----
+    onSelectionChange() {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+        this.pendingSelection = null;
+        this.selBar?.classList.remove('open');
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      if (!this.contentEl.contains(range.commonAncestorContainer)) {
+        this.pendingSelection = null;
+        this.selBar?.classList.remove('open');
+        return;
+      }
+      const text = sel.toString().replace(/\s+/g, ' ').trim();
+      if (!text) {
+        this.pendingSelection = null;
+        this.selBar?.classList.remove('open');
+        return;
+      }
+
+      // Compute prefix & suffix in full chapter plain text for rock-solid highlight re-anchoring
+      const preRange = document.createRange();
+      preRange.selectNodeContents(this.contentEl);
+      preRange.setEnd(range.startContainer, range.startOffset);
+      const beforeText = preRange.toString();
+
+      const postRange = document.createRange();
+      postRange.selectNodeContents(this.contentEl);
+      postRange.setStart(range.endContainer, range.endOffset);
+      const afterText = postRange.toString();
+
+      const prefix = beforeText.slice(-36);
+      const suffix = afterText.slice(0, 36);
+      const context = `${beforeText.slice(-70)}${text}${afterText.slice(0, 70)}`
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 220);
+
+      this.pendingSelection = { text, prefix, suffix, context };
+      this.selBar?.classList.add('open');
+    }
+
+    clearSelection() {
+      this.pendingSelection = null;
+      this.selBar?.classList.remove('open');
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch (_) {}
+    }
+
+    createHighlightFromSelection(color, openNoteModal) {
+      if (!this.pendingSelection || !this.bookMeta || !this.epub) return;
+      const chap = this.epub.spine[this.chapterIndex];
+      const hl = {
+        id: uid('hl'),
+        chapterIndex: this.chapterIndex,
+        chapterTitle: chap?.title || `Chương ${this.chapterIndex + 1}`,
+        progressRatio: this.getChapterRatio(),
+        text: this.pendingSelection.text,
+        prefix: this.pendingSelection.prefix,
+        suffix: this.pendingSelection.suffix,
+        color,
+        note: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      this.cb.addHighlight(this.bookMeta.id, hl);
+      this.clearSelection();
+      this.reRenderHighlights();
+      if (openNoteModal) {
+        this.openHighlightModal(hl.id);
+      } else {
+        this.cb.toast('Đã highlight đoạn văn');
+      }
+    }
+
+    reRenderHighlights() {
+      if (!this.bookMeta || !this.contentEl) return;
+      // Unwrap existing <mark class="pi-hl"> first
+      const existingMarks = Array.from(this.contentEl.querySelectorAll('mark.pi-hl'));
+      for (const m of existingMarks) {
+        const parent = m.parentNode;
+        while (m.firstChild) parent.insertBefore(m.firstChild, m);
+        parent.removeChild(m);
+        parent.normalize();
+      }
+
+      const highlights = this.cb
+        .getHighlights(this.bookMeta.id)
+        .filter((h) => h.chapterIndex === this.chapterIndex);
+      if (!highlights.length) return;
+
+      for (const hl of highlights) {
+        this.wrapQuoteInDom(hl);
+      }
+    }
+
+    wrapQuoteInDom(hl) {
+      if (!hl || !hl.text) return;
+      // Build flat text map of all text nodes inside contentEl
+      const walker = document.createTreeWalker(this.contentEl, NodeFilter.SHOW_TEXT, null);
+      const nodes = [];
+      let full = '';
+      let n;
+      while ((n = walker.nextNode())) {
+        if (!n.nodeValue) continue;
+        nodes.push({ node: n, start: full.length, end: full.length + n.nodeValue.length });
+        full += n.nodeValue;
+      }
+
+      // Match with prefix/suffix context first, fallback to exact match
+      let matchIdx = -1;
+      const target = hl.text;
+      if (hl.prefix) {
+        const needle = hl.prefix.slice(-16) + target;
+        const idx = full.indexOf(needle);
+        if (idx !== -1) matchIdx = idx + hl.prefix.slice(-16).length;
+      }
+      if (matchIdx === -1 && hl.suffix) {
+        const needle = target + hl.suffix.slice(0, 16);
+        const idx = full.indexOf(needle);
+        if (idx !== -1) matchIdx = idx;
+      }
+      if (matchIdx === -1) {
+        matchIdx = full.indexOf(target);
+      }
+      if (matchIdx === -1) return;
+
+      const matchEnd = matchIdx + target.length;
+
+      // Wrap overlapping text nodes cleanly (reverse order so node splits don't shift indices)
+      const affected = nodes.filter((it) => it.end > matchIdx && it.start < matchEnd);
+      for (let i = affected.length - 1; i >= 0; i--) {
+        const it = affected[i];
+        const localStart = Math.max(0, matchIdx - it.start);
+        const localEnd = Math.min(it.node.nodeValue.length, matchEnd - it.start);
+        if (localEnd <= localStart) continue;
+
+        let targetNode = it.node;
+        if (localEnd < targetNode.nodeValue.length) {
+          targetNode.splitText(localEnd);
+        }
+        if (localStart > 0) {
+          targetNode = targetNode.splitText(localStart);
+        }
+
+        const mark = document.createElement('mark');
+        mark.className = `pi-hl pi-hl-${hl.color || 'sepia'}${hl.note ? ' has-note' : ''}`;
+        mark.dataset.hlId = hl.id;
+        targetNode.parentNode.insertBefore(mark, targetNode);
+        mark.appendChild(targetNode);
+      }
+    }
+
+    getActiveHighlight() {
+      if (!this.bookMeta || !this.activeHighlightId) return null;
+      return (
+        this.cb.getHighlights(this.bookMeta.id).find((h) => h.id === this.activeHighlightId) || null
+      );
+    }
+
+    syncHighlightModalColors(activeColor) {
+      document.querySelectorAll('.hl-edit-color').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.color === activeColor);
+      });
+    }
+
+    openHighlightModal(hlId) {
+      this.activeHighlightId = hlId;
+      const hl = this.getActiveHighlight();
+      if (!hl) return;
+      this.hlQuoteEl.textContent = `“${hl.text}”`;
+      this.hlNoteInput.value = hl.note || '';
+      this.syncHighlightModalColors(hl.color || 'sepia');
+      this.hlBackdrop?.classList.add('open');
+      this.hlModal?.classList.add('open');
+    }
+
+    closeHighlightModal() {
+      this.activeHighlightId = null;
+      this.hlBackdrop?.classList.remove('open');
+      this.hlModal?.classList.remove('open');
+    }
+  }
+
+  window.PaperInkReader = PaperInkReader;
+})();
