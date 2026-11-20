@@ -64,7 +64,15 @@
       this.zip = zip;
       this.fileMap = new Map();
       this.fileMapLower = new Map();
-      this.meta = { title: 'Untitled', author: 'Unknown', language: 'en' };
+      this.meta = {
+        title: 'Untitled',
+        author: 'Unknown',
+        language: 'en',
+        genres: [],
+        series: '',
+        seriesIndex: null,
+        description: '',
+      };
       this.manifest = new Map();
       this.spine = [];
       this.spineByPath = new Map();
@@ -164,11 +172,52 @@
         this.meta.language = langEl.textContent.trim().toLowerCase();
       }
 
-      // Cover meta id
+      // Genres (dc:subject)
+      const subjectEls = Array.from(opfDoc.querySelectorAll('subject, dc\\:subject'));
+      const genreSet = new Set();
+      for (const el of subjectEls) {
+        const raw = (el.textContent || '').trim();
+        if (!raw) continue;
+        for (const part of raw.split(/[;,/|]/)) {
+          const clean = part.replace(/\s+/g, ' ').trim();
+          if (clean && clean.length >= 2 && clean.length <= 42 && !/^fiction$/i.test(clean)) {
+            genreSet.add(clean);
+          }
+        }
+      }
+      this.meta.genres = Array.from(genreSet).slice(0, 6);
+
+      // Description (dc:description)
+      const descEl = opfDoc.querySelector('description, dc\\:description');
+      if (descEl && descEl.textContent.trim()) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = descEl.textContent;
+        this.meta.description = (tmp.textContent || descEl.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 1400);
+      }
+
+      // Cover meta id + Series (Calibre & EPUB3 belongs-to-collection)
       let coverMetaId = null;
       for (const m of opfDoc.querySelectorAll('meta')) {
-        if ((m.getAttribute('name') || '').toLowerCase() === 'cover') {
-          coverMetaId = m.getAttribute('content');
+        const nameAttr = (m.getAttribute('name') || '').toLowerCase();
+        const propAttr = (m.getAttribute('property') || '').toLowerCase();
+        const contentAttr = (m.getAttribute('content') || '').trim();
+        const txt = (m.textContent || '').trim();
+
+        if (nameAttr === 'cover') {
+          coverMetaId = contentAttr;
+        } else if (nameAttr === 'calibre:series' && contentAttr) {
+          this.meta.series = contentAttr;
+        } else if (nameAttr === 'calibre:series_index' && contentAttr) {
+          const n = parseFloat(contentAttr);
+          if (!Number.isNaN(n)) this.meta.seriesIndex = n;
+        } else if (propAttr === 'belongs-to-collection' && txt && !this.meta.series) {
+          this.meta.series = txt;
+        } else if (propAttr === 'group-position' && txt && this.meta.seriesIndex == null) {
+          const n = parseFloat(txt);
+          if (!Number.isNaN(n)) this.meta.seriesIndex = n;
         }
       }
 

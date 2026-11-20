@@ -91,28 +91,36 @@
         } catch (_) {}
       }
 
-      // 2) Fetch from backend if not cached
+      // 2) Fetch from local backend if running on PaperInk PC server, otherwise direct browser lookup!
       if (!data) {
-        try {
-          const res = await fetch(`/api/dict?q=${encodeURIComponent(cleaned)}`);
-          if (res.ok) {
-            data = await res.json();
-            if (
-              isSingleWord &&
-              data &&
-              !data.offlineError &&
-              (data.viTranslation || (data.enMeanings && data.enMeanings.length)) &&
-              window.PaperInkDB
-            ) {
-              window.PaperInkDB.setDictCache(cleaned, data).catch(() => {});
-            }
+        const useLocalApi = Boolean(window.__paperInk?.isOnlineToServer);
+        if (useLocalApi) {
+          try {
+            const res = await fetch(`./api/dict?q=${encodeURIComponent(cleaned)}`);
+            if (res.ok) data = await res.json();
+          } catch (_) {}
+        }
+
+        if (!data) {
+          try {
+            data = await this.lookupDirectClient(cleaned, isSingleWord);
+          } catch (_) {
+            data = {
+              query: cleaned,
+              isSingleWord,
+              offlineError: true,
+            };
           }
-        } catch (_) {
-          data = {
-            query: cleaned,
-            isSingleWord,
-            offlineError: true,
-          };
+        }
+
+        if (
+          isSingleWord &&
+          data &&
+          !data.offlineError &&
+          (data.viTranslation || (data.enMeanings && data.enMeanings.length)) &&
+          window.PaperInkDB
+        ) {
+          window.PaperInkDB.setDictCache(cleaned, data).catch(() => {});
         }
       }
 
@@ -122,6 +130,89 @@
 
       this.currentLookup = { data, context, bookId, bookTitle };
       this.renderResult(data, context, bookId, bookTitle);
+    }
+
+    async lookupDirectClient(query, isSingleWord) {
+      const posMap = {
+        noun: 'Danh từ',
+        verb: 'Động từ',
+        adjective: 'Tính từ',
+        adverb: 'Trạng từ',
+        pronoun: 'Đại từ',
+        preposition: 'Giới từ',
+        conjunction: 'Liên từ',
+        interjection: 'Thán từ',
+      };
+
+      const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&dt=bd&q=${encodeURIComponent(query)}`;
+      const tasks = [fetch(gUrl).then((r) => (r.ok ? r.json() : null)).catch(() => null)];
+      if (isSingleWord) {
+        const dUrl = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(query.toLowerCase())}`;
+        tasks.push(fetch(dUrl).then((r) => (r.ok ? r.json() : null)).catch(() => null));
+      }
+
+      const [gData, enData] = await Promise.all(tasks);
+      let viTranslation = '';
+      const viDict = [];
+
+      if (Array.isArray(gData)) {
+        if (Array.isArray(gData[0])) {
+          viTranslation = gData[0]
+            .map((seg) => (Array.isArray(seg) ? seg[0] : ''))
+            .filter(Boolean)
+            .join('')
+            .trim();
+        }
+        if (Array.isArray(gData[1])) {
+          for (const grp of gData[1]) {
+            if (!Array.isArray(grp) || !grp[0] || !Array.isArray(grp[1])) continue;
+            const rawPos = String(grp[0]).toLowerCase();
+            viDict.push({
+              pos: posMap[rawPos] || grp[0],
+              terms: grp[1].slice(0, 8),
+            });
+          }
+        }
+      }
+
+      let phonetic = '';
+      let audio = '';
+      let lemma = '';
+      const enMeanings = [];
+      if (Array.isArray(enData) && enData[0]) {
+        const entry = enData[0];
+        lemma = entry.word || '';
+        phonetic = entry.phonetic || '';
+        for (const p of entry.phonetics || []) {
+          if (!phonetic && p.text) phonetic = p.text;
+          if (!audio && p.audio) audio = p.audio;
+        }
+        for (const m of (entry.meanings || []).slice(0, 4)) {
+          enMeanings.push({
+            pos: posMap[(m.partOfSpeech || '').toLowerCase()] || m.partOfSpeech || '',
+            posEn: m.partOfSpeech || '',
+            definitions: (m.definitions || []).slice(0, 3).map((d) => ({
+              definition: d.definition || '',
+              example: d.example || '',
+            })),
+          });
+        }
+      }
+
+      if (!viTranslation && !viDict.length && !enMeanings.length) {
+        return { query, isSingleWord, offlineError: true };
+      }
+
+      return {
+        query,
+        lemma,
+        isSingleWord,
+        phonetic,
+        audio,
+        viTranslation,
+        viDict,
+        enMeanings,
+      };
     }
 
     renderResult(data, context, bookId, bookTitle) {

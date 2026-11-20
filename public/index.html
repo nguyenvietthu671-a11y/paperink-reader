@@ -7,11 +7,15 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="description" content="PaperInk — Trình đọc sách EPUB phong cách Apple Books &amp; Kindle E-Ink hỗ trợ kệ gỗ 3D, lật trang Apple Curl, viết ghi chú S Pen và từ điển Anh–Việt offline." />
+  <meta property="og:title" content="PaperInk — Kệ sách 3D &amp; Trình đọc EPUB E-Ink" />
+  <meta property="og:description" content="Đọc file EPUB êm mắt như Kindle E-Ink với kệ gỗ 3D, hiệu ứng gập trang Apple Books, viết tay S Pen và từ điển Anh–Việt." />
+  <meta property="og:type" content="website" />
   <title>PaperInk — Kệ sách &amp; Trình đọc E-Ink</title>
 
-  <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="icon" type="image/png" href="/icons/favicon.png" />
-  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="./icons/favicon.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -19,10 +23,19 @@
     href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,500;0,700;1,500&family=Inter:wght@400;500;600;700&family=Literata:ital,opsz,wght@0,7..72,350..650;1,7..72,400..600&family=Lora:ital,wght@0,400..700;1,400..600&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap"
     rel="stylesheet"
   />
-  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="./css/styles.css" />
 </head>
 <body>
   <a href="#main-library" class="skip-link">Đi tới nội dung chính</a>
+
+  <!-- Drag & Drop EPUB Overlay -->
+  <div id="epub-drop-overlay" class="epub-drop-overlay hidden" aria-hidden="true">
+    <div class="epub-drop-card glass-chrome">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <strong>Thả file .EPUB vào đây</strong>
+      <span>Tự động đọc bìa, tác giả, thể loại, bộ truyện &amp; lưu đọc Offline</span>
+    </div>
+  </div>
 
   <!-- Eye-care global overlays -->
   <div id="paper-grain-overlay" aria-hidden="true"></div>
@@ -53,6 +66,9 @@
         </div>
 
         <div class="lib-action-cluster">
+          <button class="hdr-icon-btn glass-chrome" id="lib-import-btn" type="button" title="Thêm sách EPUB từ máy" aria-label="Thêm sách EPUB từ thiết bị">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
           <button class="hdr-icon-btn glass-chrome" id="lib-search-toggle" type="button" title="Tìm kiếm" aria-label="Mở thanh tìm kiếm" aria-expanded="false">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7.5"/><line x1="20.5" y1="20.5" x2="16.4" y2="16.4"/></svg>
           </button>
@@ -427,6 +443,15 @@
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           <div><strong>Nhập thêm file EPUB từ máy</strong><span>Lưu trực tiếp vào bộ nhớ Offline</span></div>
         </button>
+        <button class="inset-action-row" id="more-backup-export-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <div><strong>Sao lưu dữ liệu đọc (.json)</strong><span>Tiến độ, đánh giá, ghi chú S Pen &amp; từ vựng</span></div>
+        </button>
+        <button class="inset-action-row" id="more-backup-import-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+          <div><strong>Khôi phục bản sao lưu (.json)</strong><span>Chuyển tiến độ &amp; ghi chú sang thiết bị khác</span></div>
+        </button>
+        <input type="file" id="import-backup-input" accept=".json,application/json" hidden />
         <button class="inset-action-row" id="more-rescan-btn" type="button">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
           <div><strong>Quét lại kho sách trên PC</strong><span>Cập nhật sách mới thêm vào thư mục kindle</span></div>
@@ -908,7 +933,7 @@
       <div id="web-connect-card" class="qr-card">
         <div id="connect-qr" class="qr-box"></div>
         <div class="qr-url-row">
-          <code id="connect-url-text">http://...</code>
+          <code id="connect-url-text">https://...</code>
           <button class="apple-pill-btn secondary small" id="copy-lan-url-btn" type="button">Chép link</button>
         </div>
         <button class="apple-pill-btn hidden" id="pwa-install-btn" type="button">
@@ -919,16 +944,16 @@
 
       <div class="inset-group guide-group">
         <div class="inset-row stack-item">
-          <h3>Bước 1 · Mở trên S25 Ultra (cùng mạng Wi-Fi)</h3>
-          <p>Quét mã QR bằng camera S25 Ultra hoặc mở địa chỉ trên bằng <strong>Chrome</strong> / <strong>Samsung Internet</strong>.</p>
+          <h3>Bước 1 · Mở trên Samsung S25 Ultra hoặc iPhone</h3>
+          <p>Quét mã QR hoặc mở link trên bằng <strong>Chrome</strong>, <strong>Samsung Internet</strong> hoặc <strong>Safari</strong>.</p>
         </div>
         <div class="inset-row stack-item">
-          <h3>Bước 2 · Cài ra màn hình chính như App thật</h3>
-          <p>Trong Chrome trên S25 Ultra, chạm menu <strong>⋮</strong> và chọn <strong>Thêm vào màn hình chính (Add to Home screen)</strong>.</p>
+          <h3>Bước 2 · Cài ra màn hình chính như App thật (Full-screen &amp; Offline)</h3>
+          <p>Chạm menu <strong>⋮</strong> (Chrome) hoặc <strong>☰</strong> (Samsung Internet) → chọn <strong>Cài đặt ứng dụng (Install app)</strong> hoặc <strong>Thêm vào màn hình chính</strong>. Toàn bộ sách EPUB bạn nhập sẽ chạy 100% Offline không cần mạng.</p>
         </div>
-        <div class="inset-row stack-item">
-          <h3>Bước 3 · Bật chạy 100% Offline không cần Wi-Fi</h3>
-          <p>Làm 1 lần duy nhất trên Chrome S25 Ultra để trình duyệt bật Service Worker cho địa chỉ nội bộ:</p>
+        <div class="inset-row stack-item" id="http-lan-flag-step">
+          <h3>Bước 3 · Nếu dùng qua Wi-Fi nội bộ (HTTP)</h3>
+          <p>Làm 1 lần duy nhất trên Chrome S25 Ultra để bật Service Worker cho địa chỉ nội bộ:</p>
           <ol>
             <li>Mở tab mới, nhập <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code></li>
             <li>Chọn <strong>Enabled</strong> và dán <code id="chrome-flag-origin">http://...</code></li>
@@ -941,13 +966,14 @@
 
   <div id="toast" class="toast glass-chrome" role="status" aria-live="polite"></div>
 
-  <script src="/vendor/jszip.min.js"></script>
-  <script src="/js/db.js"></script>
-  <script src="/js/shelf-decor.js"></script>
-  <script src="/js/epub-engine.js"></script>
-  <script src="/js/ink-canvas.js"></script>
-  <script src="/js/dictionary-ui.js"></script>
-  <script src="/js/reader.js"></script>
-  <script src="/js/app.js"></script>
+  <script src="./vendor/jszip.min.js"></script>
+  <script src="./js/db.js"></script>
+  <script src="./js/shelf-decor.js"></script>
+  <script src="./js/epub-engine.js"></script>
+  <script src="./js/ink-canvas.js"></script>
+  <script src="./js/dictionary-ui.js"></script>
+  <script src="./js/reader.js"></script>
+  <script src="./js/demo-book.js"></script>
+  <script src="./js/app.js"></script>
 </body>
 </html>

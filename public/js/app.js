@@ -4,6 +4,7 @@
     fontFamily: 'literata',
     headingFont: 'cormorant',
     fontSize: 19,
+    headingSize: 28,
     fontWeight: 420,
     lineHeight: 1.68,
     letterSpacing: 0,
@@ -273,13 +274,37 @@
 
     registerServiceWorker() {
       if ('serviceWorker' in navigator && window.isSecureContext) {
-        navigator.serviceWorker.register('/sw.js').catch(() => {});
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
       }
       window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
         this.deferredInstallPrompt = e;
         document.getElementById('pwa-install-btn')?.classList.remove('hidden');
       });
+    }
+
+    isStaticWebHost() {
+      const host = (window.location.hostname || '').toLowerCase();
+      return (
+        host.endsWith('.github.io') ||
+        host.endsWith('.pages.dev') ||
+        host.endsWith('.netlify.app') ||
+        host.endsWith('.vercel.app') ||
+        window.location.protocol === 'file:'
+      );
+    }
+
+    async ensureStarterSampleBook() {
+      if (this.serverBooks.length > 0 || this.offlineMap.size > 0) return;
+      if (localStorage.getItem('paperink_demo_dismissed') === '1') return;
+      if (!window.PaperInkDemoBook) return;
+      try {
+        const sample = await window.PaperInkDemoBook.buildSampleEpubBlob();
+        await window.PaperInkDB.saveOfflineBook(sample);
+        await this.reloadOfflineMeta();
+      } catch (err) {
+        console.warn('[PaperInk] Sample book init skipped:', err);
+      }
     }
 
     normalizeSettings(raw) {
@@ -482,56 +507,74 @@
 
     async refreshFromServer() {
       const dot = document.getElementById('connection-dot');
-      try {
-        const [libRes, syncRes] = await Promise.all([
-          fetch('/api/library', { cache: 'no-store' }),
-          fetch('/api/state/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(this.state),
-          }),
-        ]);
+      const staticHost = this.isStaticWebHost();
 
-        if (libRes.ok) {
-          const libData = await libRes.json();
-          if (Array.isArray(libData.books)) {
-            this.serverBooks = libData.books;
-            window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+      if (!staticHost) {
+        try {
+          const [libRes, syncRes] = await Promise.all([
+            fetch('./api/library', { cache: 'no-store' }),
+            fetch('./api/state/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.state),
+            }),
+          ]);
+
+          if (libRes.ok) {
+            const libData = await libRes.json();
+            if (Array.isArray(libData.books)) {
+              this.serverBooks = libData.books;
+              window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+            }
+            this.isOnlineToServer = true;
           }
-          this.isOnlineToServer = true;
-        }
 
-        if (syncRes.ok) {
-          const merged = await syncRes.json();
-          this.state = {
-            progress: merged.progress || {},
-            bookmarks: merged.bookmarks || {},
-            highlights: merged.highlights || {},
-            bookReviews: merged.bookReviews || {},
-            inkNotes: merged.inkNotes || {},
-            vocab: Array.isArray(merged.vocab) ? merged.vocab : [],
-            deletedIds: merged.deletedIds || {},
-            settings: this.normalizeSettings(merged.settings || this.state.settings),
-            readingStats: {
-              dailyMinutes: merged.readingStats?.dailyMinutes || {},
-              dailyGoalMinutes: merged.readingStats?.dailyGoalMinutes || 30,
-              pagesTurned: merged.readingStats?.pagesTurned || 0,
-              updatedAt: merged.readingStats?.updatedAt || 0,
-            },
-            shelfConfig: this.normalizeShelfConfig(merged.shelfConfig || this.state.shelfConfig),
-          };
-          await window.PaperInkDB.setKV('state', this.state);
-          this.applySettingsToDOM();
-          this.applyBackgroundToDOM();
+          if (syncRes.ok) {
+            const merged = await syncRes.json();
+            this.state = {
+              progress: merged.progress || {},
+              bookmarks: merged.bookmarks || {},
+              highlights: merged.highlights || {},
+              bookReviews: merged.bookReviews || {},
+              inkNotes: merged.inkNotes || {},
+              vocab: Array.isArray(merged.vocab) ? merged.vocab : [],
+              deletedIds: merged.deletedIds || {},
+              settings: this.normalizeSettings(merged.settings || this.state.settings),
+              readingStats: {
+                dailyMinutes: merged.readingStats?.dailyMinutes || {},
+                dailyGoalMinutes: merged.readingStats?.dailyGoalMinutes || 30,
+                pagesTurned: merged.readingStats?.pagesTurned || 0,
+                updatedAt: merged.readingStats?.updatedAt || 0,
+              },
+              shelfConfig: this.normalizeShelfConfig(merged.shelfConfig || this.state.shelfConfig),
+            };
+            await window.PaperInkDB.setKV('state', this.state);
+            this.applySettingsToDOM();
+            this.applyBackgroundToDOM();
+          }
+        } catch (_) {
+          this.isOnlineToServer = false;
         }
-      } catch (_) {
+      } else {
         this.isOnlineToServer = false;
       }
 
+      // Hide PC-only rescan row when running as standalone public website
+      document.getElementById('more-rescan-btn')?.classList.toggle('hidden', !this.isOnlineToServer);
+
+      // Seed 1 public-domain classic starter book when library is completely empty so visitors can test right away
+      await this.ensureStarterSampleBook();
+
       if (dot) {
-        dot.classList.toggle('online', this.isOnlineToServer);
-        dot.classList.toggle('offline', !this.isOnlineToServer);
-        dot.title = this.isOnlineToServer ? 'Đã kết nối thư viện PC' : 'Chế độ Offline';
+        if (staticHost) {
+          dot.classList.add('online');
+          dot.classList.remove('offline');
+          dot.title = 'PaperInk Web · Lưu trữ riêng tư ngay trên thiết bị (hỗ trợ Offline)';
+        } else {
+          dot.classList.toggle('online', this.isOnlineToServer);
+          dot.classList.toggle('offline', !this.isOnlineToServer);
+          dot.title = this.isOnlineToServer ? 'Đã kết nối thư viện PC' : 'Chế độ Offline';
+        }
       }
 
       this.renderCurrentRoute();
@@ -539,10 +582,11 @@
 
     scheduleSync() {
       window.PaperInkDB.setKV('state', this.state).catch(() => {});
+      if (!this.isOnlineToServer || this.isStaticWebHost()) return;
       clearTimeout(this.syncTimer);
       this.syncTimer = setTimeout(async () => {
         try {
-          const res = await fetch('/api/state/sync', {
+          const res = await fetch('./api/state/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(this.state),
@@ -775,6 +819,7 @@
       root.style.setProperty('--reader-font', this.resolveFontStack(s.fontFamily, false));
       root.style.setProperty('--reader-heading-font', this.resolveFontStack(s.headingFont, true));
       root.style.setProperty('--reader-size', `${s.fontSize}px`);
+      root.style.setProperty('--reader-heading-size', `${s.headingSize || 28}px`);
       root.style.setProperty('--reader-weight', String(s.fontWeight || 420));
       root.style.setProperty('--reader-lh', String(s.lineHeight || 1.68));
       root.style.setProperty('--reader-letter-spacing', `${Number(s.letterSpacing || 0).toFixed(2)}em`);
@@ -1007,6 +1052,7 @@
         if (lbl) lbl.textContent = `${val}${suffix}`;
       };
       setVal('set-font-size', s.fontSize, 'val-font-size', 'px');
+      setVal('set-heading-size', s.headingSize || 28, 'val-heading-size', 'px');
       setVal('set-font-weight', s.fontWeight, 'val-font-weight', '');
       setVal('set-line-height', Number(s.lineHeight || 1.68).toFixed(2), 'val-line-height', '');
       setVal('set-letter-spacing', Number(s.letterSpacing || 0).toFixed(2), 'val-letter-spacing', 'em');
@@ -1051,8 +1097,8 @@
             title: off.title,
             author: off.author,
             series: off.series || '',
-            seriesIndex: null,
-            genres: ['Local EPUB'],
+            seriesIndex: off.seriesIndex ?? null,
+            genres: Array.isArray(off.genres) && off.genres.length ? off.genres : ['General Fiction'],
             language: off.language || 'en',
             fileName: off.fileName || '',
             size: off.size || 0,
@@ -1060,6 +1106,7 @@
             hasCover: Boolean(off.hasCoverBlob),
             isOffline: true,
             isLocalImport: Boolean(off.isLocalImport),
+            isDemoSample: Boolean(off.isDemoSample),
             coverDisplayUrl: this.offlineCoverUrls.get(id) || null,
             description: off.description || '',
             progress: this.state.progress[id] || null,
@@ -1273,9 +1320,18 @@
                 ? 'Chưa có sách nào lưu Offline'
                 : this.searchQuery
                 ? 'Không tìm thấy cuốn sách phù hợp'
-                : 'Kệ sách đang trống'
+                : 'Kệ sách của bạn đang trống'
             }</p>
-            <p class="muted-text">Mở bất kỳ cuốn sách nào khi kết nối PC để tự động lưu đọc ngoại tuyến.</p>
+            <p class="muted-text">${
+              this.searchQuery
+                ? 'Thử tìm bằng tên tác giả, thể loại hoặc bộ truyện khác.'
+                : 'Chọn file .EPUB trên điện thoại/máy tính (hoặc kéo thả vào đây) để tự động xếp lên kệ gỗ 3D và đọc 100% Offline.'
+            }</p>
+            ${
+              !this.searchQuery
+                ? `<div style="margin-top:16px"><button class="apple-pill-btn" data-trigger-import="1" type="button">${ICONS.plus}<span>Thêm sách .EPUB từ máy</span></button></div>`
+                : ''
+            }
           </div>
         `;
         loadMoreWrap?.classList.add('hidden');
@@ -2288,7 +2344,7 @@
       if (!silent) this.renderCurrentRoute();
 
       try {
-        const res = await fetch(`/api/books/${encodeURIComponent(bookId)}/file`);
+        const res = await fetch(`./api/books/${encodeURIComponent(bookId)}/file`);
         if (!res.ok) throw new Error('Download failed');
         const epubBlob = await res.blob();
 
@@ -2305,6 +2361,9 @@
           title: book.title,
           author: book.author,
           series: book.series || '',
+          seriesIndex: book.seriesIndex ?? null,
+          genres: Array.isArray(book.genres) ? book.genres : [],
+          description: book.description || '',
           language: book.language || 'en',
           fileName: book.fileName || '',
           size: epubBlob.size,
@@ -2330,7 +2389,10 @@
       const off = this.offlineMap.get(bookId);
       if (off) {
         if (off.isLocalImport) {
-          if (!confirm(`Xóa cuốn sách nhập thủ công "${off.title}" khỏi thiết bị này?`)) return;
+          if (!confirm(`Xóa "${off.title}" khỏi thiết bị này?`)) return;
+        }
+        if (off.isDemoSample) {
+          localStorage.setItem('paperink_demo_dismissed', '1');
         }
         await window.PaperInkDB.deleteOfflineBook(bookId);
         if (this.offlineCoverUrls.has(bookId)) {
@@ -2339,7 +2401,7 @@
         }
         await this.reloadOfflineMeta();
         this.renderCurrentRoute();
-        this.toast('Đã gỡ bản lưu Offline');
+        this.toast('Đã gỡ sách khỏi thiết bị');
       } else {
         await this.downloadBookOffline(bookId, false);
       }
@@ -2357,7 +2419,7 @@
           epubBlob = offlineRec.epubBlob;
         } else {
           this.toast('Đang mở sách…');
-          const res = await fetch(`/api/books/${encodeURIComponent(bookId)}/file`);
+          const res = await fetch(`./api/books/${encodeURIComponent(bookId)}/file`);
           if (!res.ok) throw new Error('Không thể tải sách từ PC');
           epubBlob = await res.blob();
 
@@ -2374,6 +2436,9 @@
               title: book.title,
               author: book.author,
               series: book.series || '',
+              seriesIndex: book.seriesIndex ?? null,
+              genres: Array.isArray(book.genres) ? book.genres : [],
+              description: book.description || '',
               language: book.language || 'en',
               fileName: book.fileName || '',
               size: epubBlob.size,
@@ -2394,7 +2459,7 @@
         this.toast(
           this.isOnlineToServer
             ? 'Không mở được file EPUB này.'
-            : 'Sách chưa lưu Offline — kết nối Wi-Fi cùng PC để tải trước.'
+            : 'Sách chưa lưu Offline — hãy nhập file .EPUB trực tiếp từ máy.'
         );
         document.getElementById('library-view')?.classList.remove('hidden');
       }
@@ -2413,7 +2478,10 @@
             id,
             title: parsed.meta.title || file.name.replace(/\.epub$/i, ''),
             author: parsed.meta.author || 'Unknown Author',
-            series: '',
+            series: parsed.meta.series || '',
+            seriesIndex: parsed.meta.seriesIndex ?? null,
+            genres: Array.isArray(parsed.meta.genres) ? parsed.meta.genres : [],
+            description: parsed.meta.description || '',
             language: parsed.meta.language || 'en',
             fileName: file.name,
             size: file.size,
@@ -2431,7 +2499,7 @@
       if (imported > 0) {
         await this.reloadOfflineMeta();
         this.renderCurrentRoute();
-        this.toast(`Đã nhập ${imported} sách EPUB vào bộ nhớ Offline!`);
+        this.toast(`Đã thêm ${imported} cuốn EPUB vào kệ Offline!`);
       } else {
         this.toast('Vui lòng chọn tệp .epub hợp lệ');
       }
@@ -2730,6 +2798,61 @@
       this.downloadTextFile('paperink-vocabulary.md', lines.join('\n'));
     }
 
+    exportBackupJson() {
+      const payload = {
+        app: 'PaperInk',
+        version: 3,
+        exportedAt: new Date().toISOString(),
+        state: this.state,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `paperink-backup-${todayKey(0)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      this.toast('Đã xuất bản sao lưu dữ liệu đọc (.json)');
+    }
+
+    async importBackupJson(file) {
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const incoming = parsed?.state || parsed;
+        if (!incoming || typeof incoming !== 'object') throw new Error('Invalid backup');
+        this.state = {
+          progress: { ...this.state.progress, ...(incoming.progress || {}) },
+          bookmarks: { ...this.state.bookmarks, ...(incoming.bookmarks || {}) },
+          highlights: { ...this.state.highlights, ...(incoming.highlights || {}) },
+          bookReviews: { ...this.state.bookReviews, ...(incoming.bookReviews || {}) },
+          inkNotes: { ...this.state.inkNotes, ...(incoming.inkNotes || {}) },
+          vocab: Array.isArray(incoming.vocab) ? incoming.vocab : this.state.vocab,
+          deletedIds: { ...this.state.deletedIds, ...(incoming.deletedIds || {}) },
+          settings: this.normalizeSettings(incoming.settings || this.state.settings),
+          readingStats: {
+            dailyMinutes: {
+              ...(this.state.readingStats?.dailyMinutes || {}),
+              ...(incoming.readingStats?.dailyMinutes || {}),
+            },
+            dailyGoalMinutes: incoming.readingStats?.dailyGoalMinutes || this.state.readingStats?.dailyGoalMinutes || 30,
+            pagesTurned: Math.max(this.state.readingStats?.pagesTurned || 0, incoming.readingStats?.pagesTurned || 0),
+            updatedAt: Date.now(),
+          },
+          shelfConfig: this.normalizeShelfConfig(incoming.shelfConfig || this.state.shelfConfig),
+        };
+        await window.PaperInkDB.setKV('state', this.state);
+        this.applySettingsToDOM();
+        this.applyBackgroundToDOM();
+        this.renderCurrentRoute();
+        this.scheduleSync();
+        this.toast('Đã khôi phục tiến độ, đánh giá & ghi chú thành công!');
+      } catch (_) {
+        this.toast('File sao lưu .json không hợp lệ');
+      }
+    }
+
     async openConnectModal() {
       this.closeAllSheets();
       document.getElementById('connect-backdrop')?.classList.add('open');
@@ -2738,18 +2861,33 @@
       const qrBox = document.getElementById('connect-qr');
       const urlEl = document.getElementById('connect-url-text');
       const flagCmd = document.getElementById('chrome-flag-origin');
+      const httpStep = document.getElementById('http-lan-flag-step');
 
-      try {
-        const res = await fetch('/api/info');
-        if (res.ok) {
-          const info = await res.json();
-          if (qrBox) qrBox.innerHTML = info.qrSvg || '';
-          if (urlEl) urlEl.textContent = info.primaryUrl || window.location.origin;
-          if (flagCmd) flagCmd.textContent = info.primaryUrl || window.location.origin;
-        }
-      } catch (_) {
-        if (urlEl) urlEl.textContent = window.location.origin;
+      const currentUrl = `${window.location.origin}${window.location.pathname}`;
+      const isHttps = window.location.protocol === 'https:';
+      httpStep?.classList.toggle('hidden', isHttps);
+
+      let loadedFromServer = false;
+      if (this.isOnlineToServer && !this.isStaticWebHost()) {
+        try {
+          const res = await fetch('./api/info');
+          if (res.ok) {
+            const info = await res.json();
+            if (qrBox) qrBox.innerHTML = info.qrSvg || '';
+            if (urlEl) urlEl.textContent = info.primaryUrl || currentUrl;
+            if (flagCmd) flagCmd.textContent = info.primaryUrl || currentUrl;
+            loadedFromServer = true;
+          }
+        } catch (_) {}
+      }
+
+      if (!loadedFromServer) {
+        if (urlEl) urlEl.textContent = currentUrl;
         if (flagCmd) flagCmd.textContent = window.location.origin;
+        if (qrBox) {
+          const qrImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&data=${encodeURIComponent(currentUrl)}`;
+          qrBox.innerHTML = `<img src="${escHtml(qrImgUrl)}" alt="Mã QR mở PaperInk trên điện thoại" style="width:100%;height:100%;object-fit:contain;border-radius:8px" />`;
+        }
       }
     }
 
@@ -2810,6 +2948,9 @@
       });
 
       // Top header actions
+      document.getElementById('lib-import-btn')?.addEventListener('click', () => {
+        document.getElementById('import-epub-input')?.click();
+      });
       document.getElementById('lib-search-toggle')?.addEventListener('click', () => {
         this.setSearchOpen(!this.searchOpen);
       });
@@ -2828,11 +2969,24 @@
         this.closeAllSheets();
         document.getElementById('import-epub-input')?.click();
       });
+      document.getElementById('more-backup-export-btn')?.addEventListener('click', () => {
+        this.closeAllSheets();
+        this.exportBackupJson();
+      });
+      document.getElementById('more-backup-import-btn')?.addEventListener('click', () => {
+        this.closeAllSheets();
+        document.getElementById('import-backup-input')?.click();
+      });
+      const backupInp = document.getElementById('import-backup-input');
+      backupInp?.addEventListener('change', () => {
+        if (backupInp.files?.[0]) this.importBackupJson(backupInp.files[0]);
+        backupInp.value = '';
+      });
       document.getElementById('more-rescan-btn')?.addEventListener('click', async () => {
         this.closeAllSheets();
         this.toast('Đang quét lại kho sách trên PC…');
         try {
-          const res = await fetch('/api/library/rescan', { method: 'POST' });
+          const res = await fetch('./api/library/rescan', { method: 'POST' });
           if (res.ok) {
             const data = await res.json();
             this.serverBooks = data.books || [];
@@ -3006,6 +3160,12 @@
           this.selectedStickerId = null;
           document.querySelectorAll('.placed-sticker.selected').forEach((n) => n.classList.remove('selected'));
           this.updateStickerInspectorUI();
+          return;
+        }
+
+        const triggerImport = e.target.closest('[data-trigger-import]');
+        if (triggerImport) {
+          document.getElementById('import-epub-input')?.click();
           return;
         }
 
@@ -3184,6 +3344,12 @@
       document.getElementById('book-info-close')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-backdrop')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-body')?.addEventListener('click', (e) => {
+        const triggerImport = e.target.closest('[data-trigger-import]');
+        if (triggerImport) {
+          document.getElementById('import-epub-input')?.click();
+          return;
+        }
+
         const rateBtn = e.target.closest('[data-rate-book]');
         if (rateBtn) {
           this.setBookRating(rateBtn.dataset.rateBook, parseInt(rateBtn.dataset.rateVal, 10));
@@ -3361,6 +3527,7 @@
         });
       };
       bindRange('set-font-size', 'fontSize', false);
+      bindRange('set-heading-size', 'headingSize', false);
       bindRange('set-font-weight', 'fontWeight', false);
       bindRange('set-line-height', 'lineHeight', true);
       bindRange('set-letter-spacing', 'letterSpacing', true);
@@ -3368,6 +3535,35 @@
       bindRange('set-para-gap', 'paraGap', true);
       bindRange('set-extra-dim', 'extraDim', false);
       bindRange('set-warmth', 'warmth', false);
+
+      // Drag & Drop .EPUB anywhere onto Library!
+      const dropOverlay = document.getElementById('epub-drop-overlay');
+      let dragDepth = 0;
+      const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+      window.addEventListener('dragenter', (e) => {
+        if (!hasFiles(e) || !document.getElementById('reader-view')?.classList.contains('hidden')) return;
+        e.preventDefault();
+        dragDepth++;
+        dropOverlay?.classList.remove('hidden');
+      });
+      window.addEventListener('dragover', (e) => {
+        if (!hasFiles(e) || !document.getElementById('reader-view')?.classList.contains('hidden')) return;
+        e.preventDefault();
+      });
+      window.addEventListener('dragleave', () => {
+        if (dragDepth <= 0) return;
+        dragDepth--;
+        if (dragDepth === 0) dropOverlay?.classList.add('hidden');
+      });
+      window.addEventListener('drop', (e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        dragDepth = 0;
+        dropOverlay?.classList.add('hidden');
+        if (e.dataTransfer?.files?.length) {
+          this.importLocalEpubFiles(e.dataTransfer.files);
+        }
+      });
 
       const bindCheck = (id, key) => {
         const el = document.getElementById(id);
