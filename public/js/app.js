@@ -99,6 +99,7 @@
     starOutline: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
     info: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
     pen: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
+    folder: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
   };
 
   function escHtml(s) {
@@ -185,6 +186,8 @@
         highlights: {},
         bookReviews: {},
         inkNotes: {},
+        folders: [],
+        hiddenBookIds: {},
         vocab: [],
         deletedIds: {},
         settings: { ...DEFAULT_SETTINGS },
@@ -208,6 +211,13 @@
       this.renderLimit = 72;
       this.downloadingIds = new Set();
       this.lastShelfCols = this.computeShelfCols();
+
+      // Multi-Select Books & Custom Folders state
+      this.selectMode = false;
+      this.selectedBookIds = new Set();
+      this.visibleShelfBookIds = [];
+      this.suppressNextBookClick = false;
+      this.folderModalCtx = null;
 
       // Sticker Edit & Drag state
       this.editStickersMode = false;
@@ -345,6 +355,8 @@
             highlights: savedState.highlights || {},
             bookReviews: savedState.bookReviews || {},
             inkNotes: savedState.inkNotes || {},
+            folders: Array.isArray(savedState.folders) ? savedState.folders : [],
+            hiddenBookIds: savedState.hiddenBookIds || {},
             vocab: Array.isArray(savedState.vocab) ? savedState.vocab : [],
             deletedIds: savedState.deletedIds || {},
             settings: this.normalizeSettings(savedState.settings),
@@ -537,6 +549,8 @@
               highlights: merged.highlights || {},
               bookReviews: merged.bookReviews || {},
               inkNotes: merged.inkNotes || {},
+              folders: Array.isArray(merged.folders) ? merged.folders : this.state.folders || [],
+              hiddenBookIds: merged.hiddenBookIds || this.state.hiddenBookIds || {},
               vocab: Array.isArray(merged.vocab) ? merged.vocab : [],
               deletedIds: merged.deletedIds || {},
               settings: this.normalizeSettings(merged.settings || this.state.settings),
@@ -1114,13 +1128,17 @@
           });
         }
       }
-      return Array.from(map.values());
+      const hidden = this.state.hiddenBookIds || {};
+      return Array.from(map.values()).filter((b) => !hidden[b.id]);
     }
 
     // ---- Navigation & Route Controller ----
     setRoute(route, drilldown = null) {
       if (this.editStickersMode && route !== 'shelf') {
         this.setEditStickersMode(false);
+      }
+      if (this.selectMode) {
+        this.setSelectMode(false, null, false);
       }
       this.route = route;
       this.drilldown = drilldown;
@@ -1164,16 +1182,412 @@
     }
 
     setEditStickersMode(active) {
+      if (active && this.selectMode) {
+        this.setSelectMode(false, null, false);
+      }
       this.editStickersMode = Boolean(active);
       if (!this.editStickersMode) this.selectedStickerId = null;
       document.getElementById('library-view')?.classList.toggle('edit-stickers-mode', this.editStickersMode);
       document.getElementById('edit-shelf-banner')?.classList.toggle('hidden', !this.editStickersMode);
-      document.getElementById('bottom-tabbar')?.classList.toggle('hidden', this.editStickersMode);
+      document.getElementById('bottom-tabbar')?.classList.toggle('hidden', this.editStickersMode || this.selectMode);
       document.getElementById('toggle-drag-mode-btn')?.classList.toggle('active', this.editStickersMode);
       this.updateStickerInspectorUI();
       if (this.route === 'shelf' || this.drilldown) {
         this.renderShelfPage();
       }
+    }
+
+    // ---- MULTI-SELECT BOOKS & CUSTOM FOLDERS ENGINE ----
+    setSelectMode(active, initialBookId = null, rerender = true) {
+      const next = Boolean(active);
+      if (next && this.editStickersMode) {
+        this.setEditStickersMode(false);
+      }
+      this.selectMode = next;
+      this.selectedBookIds.clear();
+      if (next && initialBookId) {
+        this.selectedBookIds.add(initialBookId);
+      }
+
+      const libView = document.getElementById('library-view');
+      libView?.classList.toggle('select-books-mode', this.selectMode);
+      document.getElementById('select-books-banner')?.classList.toggle('hidden', !this.selectMode);
+      document.getElementById('select-action-bar')?.classList.toggle('hidden', !this.selectMode);
+      document.getElementById('bottom-tabbar')?.classList.toggle('hidden', this.selectMode || this.editStickersMode);
+      document.getElementById('toggle-select-mode-btn')?.classList.toggle('active', this.selectMode);
+
+      this.updateSelectUI();
+      if (rerender && (this.route === 'shelf' || this.drilldown)) {
+        this.renderShelfPage();
+      }
+    }
+
+    toggleBookSelection(bookId) {
+      if (!bookId) return;
+      if (this.selectedBookIds.has(bookId)) {
+        this.selectedBookIds.delete(bookId);
+      } else {
+        this.selectedBookIds.add(bookId);
+      }
+      // Update DOM selection rings immediately without heavy full rerender
+      document.querySelectorAll(`[data-open-book="${CSS.escape(bookId)}"]`).forEach((el) => {
+        el.classList.toggle('selected', this.selectedBookIds.has(bookId));
+      });
+      this.updateSelectUI();
+    }
+
+    selectAllVisibleBooks() {
+      const allIds = this.visibleShelfBookIds || [];
+      const allSelected = allIds.length > 0 && allIds.every((id) => this.selectedBookIds.has(id));
+      if (allSelected) {
+        this.selectedBookIds.clear();
+      } else {
+        allIds.forEach((id) => this.selectedBookIds.add(id));
+      }
+      document.querySelectorAll('#books-container [data-open-book]').forEach((el) => {
+        el.classList.toggle('selected', this.selectedBookIds.has(el.dataset.openBook));
+      });
+      this.updateSelectUI();
+    }
+
+    updateSelectUI() {
+      const count = this.selectedBookIds.size;
+      const lbl = document.getElementById('select-count-label');
+      if (lbl) lbl.textContent = count > 0 ? `Đã chọn ${count} cuốn` : 'Chạm vào sách để chọn';
+
+      const allIds = this.visibleShelfBookIds || [];
+      const allSelected = allIds.length > 0 && allIds.every((id) => this.selectedBookIds.has(id));
+      const allBtn = document.getElementById('select-all-btn');
+      if (allBtn) allBtn.textContent = allSelected ? 'Bỏ chọn' : 'Chọn tất cả';
+
+      const inFolder = this.drilldown?.type === 'folder';
+      document.getElementById('sel-remove-folder-btn')?.classList.toggle('hidden', !inFolder);
+
+      ['sel-new-folder-btn', 'sel-add-to-btn', 'sel-remove-folder-btn', 'sel-delete-books-btn'].forEach((id) => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = count === 0;
+      });
+    }
+
+    getFolderById(folderId) {
+      return (this.state.folders || []).find((f) => f.id === folderId) || null;
+    }
+
+    openFolderNameModal(mode = 'create', folderId = null) {
+      this.closeAllSheets();
+      this.folderModalCtx = { mode, folderId };
+      const titleEl = document.getElementById('folder-name-title');
+      const inputEl = document.getElementById('folder-name-input');
+      const hintEl = document.getElementById('folder-name-hint');
+      const submitEl = document.getElementById('folder-name-submit');
+
+      if (mode === 'rename' && folderId) {
+        const folder = this.getFolderById(folderId);
+        if (!folder) return;
+        if (titleEl) titleEl.textContent = 'Đổi tên thư mục';
+        if (inputEl) inputEl.value = folder.name || '';
+        if (hintEl) hintEl.textContent = 'Nhập tên mới cho thư mục sách này.';
+        if (submitEl) submitEl.textContent = 'Lưu tên';
+      } else {
+        const cnt = this.selectedBookIds.size;
+        if (titleEl) titleEl.textContent = 'Tạo thư mục mới';
+        if (inputEl) inputEl.value = '';
+        if (hintEl) {
+          hintEl.textContent =
+            cnt > 0
+              ? `Sẽ tự động đưa ${cnt} cuốn sách đang chọn vào thư mục mới này.`
+              : 'Tạo một thư mục mới để gom nhóm sách theo ý thích.';
+        }
+        if (submitEl) submitEl.textContent = cnt > 0 ? `Tạo & Thêm (${cnt})` : 'Tạo thư mục';
+      }
+
+      document.getElementById('folder-name-backdrop')?.classList.add('open');
+      document.getElementById('folder-name-modal')?.classList.add('open');
+      setTimeout(() => {
+        inputEl?.focus();
+        inputEl?.select?.();
+      }, 60);
+    }
+
+    submitFolderNameModal() {
+      const ctx = this.folderModalCtx;
+      const name = (document.getElementById('folder-name-input')?.value || '').trim();
+      if (!name) {
+        this.toast('Vui lòng nhập tên thư mục');
+        document.getElementById('folder-name-input')?.focus();
+        return;
+      }
+      if (ctx?.mode === 'rename' && ctx.folderId) {
+        this.renameFolder(ctx.folderId, name);
+      } else {
+        this.createFolderWithBooks(name, Array.from(this.selectedBookIds));
+      }
+      this.closeAllSheets();
+    }
+
+    createFolderWithBooks(name, bookIds = []) {
+      const cleanName = String(name || '').trim().slice(0, 48);
+      if (!cleanName) return;
+      const folder = {
+        id: uid('fld'),
+        name: cleanName,
+        bookIds: Array.from(new Set(bookIds)),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      if (!Array.isArray(this.state.folders)) this.state.folders = [];
+      this.state.folders.unshift(folder);
+      this.scheduleSync();
+      this.setSelectMode(false, null, false);
+      this.renderCurrentRoute();
+      this.toast(
+        folder.bookIds.length
+          ? `Đã tạo thư mục "${cleanName}" (${folder.bookIds.length} cuốn)`
+          : `Đã tạo thư mục "${cleanName}"`
+      );
+    }
+
+    renameFolder(folderId, newName) {
+      const folder = this.getFolderById(folderId);
+      if (!folder) return;
+      folder.name = String(newName || '').trim().slice(0, 48) || folder.name;
+      folder.updatedAt = Date.now();
+      if (this.drilldown?.type === 'folder' && this.drilldown.value === folderId) {
+        this.drilldown.label = folder.name;
+      }
+      this.scheduleSync();
+      this.renderCurrentRoute();
+      this.toast(`Đã đổi tên thành "${folder.name}"`);
+    }
+
+    deleteFolderOnly(folderId) {
+      const folder = this.getFolderById(folderId);
+      if (!folder) return;
+      if (!confirm(`Xóa thư mục "${folder.name}"? (Các cuốn sách bên trong vẫn giữ nguyên trên Kệ sách)`)) return;
+      this.state.folders = (this.state.folders || []).filter((f) => f.id !== folderId);
+      this.state.deletedIds[folderId] = Date.now();
+      this.scheduleSync();
+      if (this.drilldown?.type === 'folder' && this.drilldown.value === folderId) {
+        this.setRoute('shelf', null);
+      } else {
+        this.renderCurrentRoute();
+      }
+      this.toast(`Đã xóa thư mục "${folder.name}"`);
+    }
+
+    addBooksToFolder(folderId, bookIds) {
+      const folder = this.getFolderById(folderId);
+      if (!folder || !bookIds.length) return;
+      const merged = new Set(folder.bookIds || []);
+      let added = 0;
+      for (const id of bookIds) {
+        if (!merged.has(id)) {
+          merged.add(id);
+          added++;
+        }
+      }
+      folder.bookIds = Array.from(merged);
+      folder.updatedAt = Date.now();
+      this.scheduleSync();
+      this.closeAllSheets();
+      this.setSelectMode(false, null, false);
+      this.renderCurrentRoute();
+      this.toast(
+        added > 0
+          ? `Đã thêm ${added} cuốn vào "${folder.name}"`
+          : `Các sách này đã có sẵn trong "${folder.name}"`
+      );
+    }
+
+    removeBooksFromFolder(folderId, bookIds) {
+      const folder = this.getFolderById(folderId);
+      if (!folder || !bookIds.length) return;
+      const rem = new Set(bookIds);
+      folder.bookIds = (folder.bookIds || []).filter((id) => !rem.has(id));
+      folder.updatedAt = Date.now();
+      this.scheduleSync();
+      this.setSelectMode(false, null, false);
+      this.renderCurrentRoute();
+      this.toast(`Đã gỡ ${rem.size} cuốn khỏi "${folder.name}"`);
+    }
+
+    markSelectedBooksStatus(status) {
+      const ids = Array.from(this.selectedBookIds);
+      if (!ids.length) return;
+      const now = Date.now();
+      for (const id of ids) {
+        const cur = this.state.progress[id] || {};
+        if (status === 'reading') {
+          this.state.progress[id] = {
+            ...cur,
+            chapterIndex: cur.chapterIndex || 0,
+            chapterRatio: cur.chapterRatio || 0,
+            bookPercent: cur.bookPercent && cur.bookPercent < 96 ? cur.bookPercent : 1,
+            updatedAt: now,
+          };
+        } else if (status === 'finished') {
+          this.state.progress[id] = {
+            ...cur,
+            bookPercent: 100,
+            estimatedMinsLeft: 0,
+            updatedAt: now,
+          };
+        }
+      }
+      this.scheduleSync();
+      this.closeAllSheets();
+      this.setSelectMode(false, null, false);
+      this.renderCurrentRoute();
+      this.toast(
+        status === 'finished'
+          ? `Đã đánh dấu ${ids.length} cuốn là Đã đọc xong`
+          : `Đã thêm ${ids.length} cuốn vào mục Đang đọc`
+      );
+    }
+
+    openFolderPickerSheet() {
+      const count = this.selectedBookIds.size;
+      if (count === 0) return;
+      this.closeAllSheets();
+
+      const body = document.getElementById('folder-picker-body');
+      const titleEl = document.getElementById('folder-picker-title');
+      if (titleEl) titleEl.textContent = `Thêm ${count} cuốn vào…`;
+      if (!body) return;
+
+      const allBooks = this.getMergedBooks();
+      const bookMap = new Map(allBooks.map((b) => [b.id, b]));
+      const folders = this.state.folders || [];
+
+      const foldersListHtml = folders.length
+        ? folders
+            .map((f) => {
+              const validBooks = (f.bookIds || []).map((id) => bookMap.get(id)).filter(Boolean);
+              const thumb = validBooks[0] ? this.renderCoverMarkup(validBooks[0]) : ICONS.folder;
+              return `
+                <button class="inset-action-row folder-pick-row" data-pick-folder="${escHtml(f.id)}" type="button">
+                  <span class="folder-pick-thumb">${thumb}</span>
+                  <div>
+                    <strong>${escHtml(f.name)}</strong>
+                    <span class="tabular">${validBooks.length} cuốn</span>
+                  </div>
+                </button>
+              `;
+            })
+            .join('')
+        : `<div class="inset-row"><p class="muted-text" style="margin:0;font-size:0.84rem">Chưa có thư mục nào — bấm nút tạo mới ở trên để tạo thư mục đầu tiên.</p></div>`;
+
+      body.innerHTML = `
+        <div class="inset-section">
+          <div class="inset-section-label">Thư mục của bạn</div>
+          <div class="inset-group">
+            <button class="inset-action-row" data-picker-new-folder="1" type="button">
+              ${ICONS.plus}
+              <div><strong>Tạo thư mục mới &amp; đặt tên…</strong><span>Gom ${count} cuốn đang chọn vào thư mục mới</span></div>
+            </button>
+            ${foldersListHtml}
+          </div>
+        </div>
+        <div class="inset-section">
+          <div class="inset-section-label">Hoặc thêm nhanh vào danh sách đọc</div>
+          <div class="inset-group">
+            <button class="inset-action-row" data-picker-status="reading" type="button">
+              ${ICONS.pen}
+              <div><strong>Đánh dấu Đang đọc</strong><span>Hiện lên dải Đọc tiếp &amp; tab Tiến độ</span></div>
+            </button>
+            <button class="inset-action-row" data-picker-status="finished" type="button">
+              ${ICONS.check}
+              <div><strong>Đánh dấu Đã đọc xong (100%)</strong><span>Chuyển sang mục Đã xong để đánh giá sao</span></div>
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('folder-picker-backdrop')?.classList.add('open');
+      document.getElementById('folder-picker-sheet')?.classList.add('open');
+    }
+
+    async deleteSelectedBooks() {
+      const ids = Array.from(this.selectedBookIds);
+      if (!ids.length) return;
+      const msg =
+        ids.length === 1
+          ? 'Xóa cuốn sách đã chọn khỏi kệ sách?'
+          : `Xóa ${ids.length} cuốn sách đã chọn khỏi kệ sách?`;
+      if (!confirm(msg)) return;
+
+      const now = Date.now();
+      if (!this.state.hiddenBookIds) this.state.hiddenBookIds = {};
+
+      for (const id of ids) {
+        const off = this.offlineMap.get(id);
+        if (off) {
+          if (off.isDemoSample) localStorage.setItem('paperink_demo_dismissed', '1');
+          await window.PaperInkDB.deleteOfflineBook(id).catch(() => {});
+          if (this.offlineCoverUrls.has(id)) {
+            URL.revokeObjectURL(this.offlineCoverUrls.get(id));
+            this.offlineCoverUrls.delete(id);
+          }
+        }
+        // Mark hidden for server-indexed books too
+        this.state.hiddenBookIds[id] = now;
+        delete this.state.progress[id];
+      }
+
+      // Prune deleted books from all custom folders
+      const delSet = new Set(ids);
+      for (const f of this.state.folders || []) {
+        const before = (f.bookIds || []).length;
+        f.bookIds = (f.bookIds || []).filter((bid) => !delSet.has(bid));
+        if (f.bookIds.length !== before) f.updatedAt = now;
+      }
+
+      await this.reloadOfflineMeta();
+      this.scheduleSync();
+      this.setSelectMode(false, null, false);
+      this.renderCurrentRoute();
+      this.toast(`Đã xóa ${ids.length} cuốn sách`);
+    }
+
+    renderFoldersStrip(allBooks) {
+      const sec = document.getElementById('folders-section');
+      const strip = document.getElementById('folders-strip');
+      if (!sec || !strip) return;
+
+      const folders = this.state.folders || [];
+      const show =
+        !this.drilldown &&
+        !this.editStickersMode &&
+        !this.selectMode &&
+        this.shelfFilter === 'all' &&
+        !this.searchQuery &&
+        folders.length > 0;
+
+      sec.classList.toggle('hidden', !show);
+      if (!show) return;
+
+      const bookMap = new Map(allBooks.map((b) => [b.id, b]));
+      strip.innerHTML = folders
+        .map((f) => {
+          const validBooks = (f.bookIds || []).map((id) => bookMap.get(id)).filter(Boolean);
+          const thumbs = validBooks.slice(0, 3);
+          const coversHtml = thumbs.length
+            ? thumbs
+                .map((b, idx) => `<div class="folder-mini-cover fmc-${idx}">${this.renderCoverMarkup(b)}</div>`)
+                .join('')
+            : `<div class="folder-empty-glyph">${ICONS.folder}</div>`;
+
+          return `
+            <article class="folder-card glass-card" data-open-folder="${escHtml(f.id)}" tabindex="0" role="button" aria-label="Mở thư mục ${escHtml(f.name)}">
+              <div class="folder-collage">${coversHtml}</div>
+              <div class="folder-card-meta">
+                <div class="folder-card-name" title="${escHtml(f.name)}">${escHtml(f.name)}</div>
+                <div class="folder-card-count tabular">${validBooks.length} cuốn</div>
+              </div>
+            </article>
+          `;
+        })
+        .join('');
     }
 
     renderCurrentRoute() {
@@ -1210,6 +1624,9 @@
       const titleEl = document.getElementById('view-title');
       const subEl = document.getElementById('lib-subtitle');
 
+      const isFolderView = this.drilldown?.type === 'folder';
+      document.getElementById('folder-header-bar')?.classList.toggle('hidden', !isFolderView);
+
       if (this.drilldown) {
         if (this.drilldown.type === 'genre') {
           scoped = all.filter((b) => (b.genres || []).includes(this.drilldown.value));
@@ -1217,6 +1634,11 @@
           scoped = all.filter((b) => (b.author || '') === this.drilldown.value);
         } else if (this.drilldown.type === 'series') {
           scoped = all.filter((b) => (b.series || '') === this.drilldown.value);
+        } else if (this.drilldown.type === 'folder') {
+          const folder = this.getFolderById(this.drilldown.value);
+          const idSet = new Set(folder?.bookIds || []);
+          scoped = all.filter((b) => idSet.has(b.id));
+          if (folder) this.drilldown.label = folder.name;
         }
         if (titleEl) titleEl.textContent = this.drilldown.label;
         if (subEl) subEl.textContent = `${scoped.length} cuốn`;
@@ -1227,6 +1649,9 @@
           subEl.textContent = `${all.length} cuốn${offlineCnt ? ` · ${offlineCnt} Offline` : ''}`;
         }
       }
+
+      // Render custom folders strip on home shelf
+      this.renderFoldersStrip(all);
 
       const readingBooks = scoped
         .filter((b) => b.progress && b.progress.updatedAt)
@@ -1310,6 +1735,9 @@
       const container = document.getElementById('books-container');
       const loadMoreWrap = document.getElementById('load-more-wrap');
       if (!container) return;
+
+      this.visibleShelfBookIds = filtered.map((b) => b.id);
+      if (this.selectMode) this.updateSelectUI();
 
       if (filtered.length === 0) {
         container.className = '';
@@ -1496,13 +1924,17 @@
         ? `<button class="cover-corner-btn saved" data-toggle-offline="${escHtml(book.id)}" type="button" title="${offlineBtnTitle}" aria-label="${offlineBtnTitle}">${ICONS.check}</button>`
         : `<button class="cover-corner-btn hover-only" data-toggle-offline="${escHtml(book.id)}" type="button" title="${offlineBtnTitle}" aria-label="${offlineBtnTitle}">${ICONS.download}</button>`;
 
+      const isSel = this.selectedBookIds.has(book.id);
+      const selectBadge = `<span class="book-select-badge" aria-hidden="true">${ICONS.check}</span>`;
+
       return `
-        <article class="shelf-book" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
+        <article class="shelf-book ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
           <div class="shelf-book-stand">
             <div class="shelf-book-cover">
               ${this.renderCoverMarkup(book)}
               ${idxBadge}
               ${offlineIndicator}
+              ${selectBadge}
               ${pct > 0 ? `<div class="cover-progress"><div style="width:${pct}%"></div></div>` : ''}
             </div>
             <div class="shelf-book-pages" aria-hidden="true"></div>
@@ -1527,12 +1959,16 @@
         ? `<button class="cover-corner-btn saved" data-toggle-offline="${escHtml(book.id)}" type="button" title="${offlineBtnTitle}">${ICONS.check}</button>`
         : `<button class="cover-corner-btn hover-only" data-toggle-offline="${escHtml(book.id)}" type="button" title="${offlineBtnTitle}">${ICONS.download}</button>`;
 
+      const isSel = this.selectedBookIds.has(book.id);
+      const selectBadge = `<span class="book-select-badge" aria-hidden="true">${ICONS.check}</span>`;
+
       return `
-        <article class="book-card" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
+        <article class="book-card ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
           <div class="book-cover-wrap">
             ${this.renderCoverMarkup(book)}
             ${idxBadge}
             ${offlineIndicator}
+            ${selectBadge}
             ${pct > 0 ? `<div class="cover-progress"><div style="width:${pct}%"></div></div>` : ''}
           </div>
           <div class="book-card-title" title="${escHtml(book.title)}">${escHtml(book.title)}</div>
@@ -1547,9 +1983,11 @@
       const offlineBtnTitle = book.isOffline ? 'Đã lưu Offline (nhấn để gỡ)' : 'Lưu đọc Offline';
       const offlineIcon = isDl ? ICONS.spinner : book.isOffline ? ICONS.check : ICONS.download;
       const offlineBadge = book.isOffline ? `<span class="offline-pill">Offline</span>` : '';
+      const isSel = this.selectedBookIds.has(book.id);
 
       return `
-        <article class="book-row" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
+        <article class="book-row ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
+          <span class="book-select-badge row-select-badge" aria-hidden="true">${ICONS.check}</span>
           <div class="book-row-cover">${this.renderCoverMarkup(book)}</div>
           <div class="book-row-meta">
             <div class="book-row-title">${
@@ -2474,6 +2912,9 @@
           const parsed = await window.PaperInkEpub.loadFromBlob(file);
           const coverBlob = await parsed.getCoverBlob();
           const id = `local_${file.name.replace(/[^a-z0-9]/gi, '_').slice(0, 24)}_${file.size}`;
+          if (this.state.hiddenBookIds?.[id]) {
+            delete this.state.hiddenBookIds[id];
+          }
           await window.PaperInkDB.saveOfflineBook({
             id,
             title: parsed.meta.title || file.name.replace(/\.epub$/i, ''),
@@ -2828,6 +3269,8 @@
           highlights: { ...this.state.highlights, ...(incoming.highlights || {}) },
           bookReviews: { ...this.state.bookReviews, ...(incoming.bookReviews || {}) },
           inkNotes: { ...this.state.inkNotes, ...(incoming.inkNotes || {}) },
+          folders: Array.isArray(incoming.folders) ? incoming.folders : this.state.folders || [],
+          hiddenBookIds: { ...(this.state.hiddenBookIds || {}), ...(incoming.hiddenBookIds || {}) },
           vocab: Array.isArray(incoming.vocab) ? incoming.vocab : this.state.vocab,
           deletedIds: { ...this.state.deletedIds, ...(incoming.deletedIds || {}) },
           settings: this.normalizeSettings(incoming.settings || this.state.settings),
@@ -3112,8 +3555,78 @@
         if (e.key === 'Escape') {
           if (this.dictUI.isOpen()) this.dictUI.close();
           else if (this.inkCanvas?.active) this.inkCanvas.setActive(false);
+          else if (document.querySelector('.sheet-panel.open, .modal-panel.open')) this.closeAllSheets();
+          else if (this.selectMode) this.setSelectMode(false);
           else if (this.editStickersMode) this.setEditStickersMode(false);
           else this.closeAllSheets();
+        }
+      });
+
+      // Multi-Select Books & Custom Folder Controls
+      document.getElementById('toggle-select-mode-btn')?.addEventListener('click', () => {
+        this.setSelectMode(!this.selectMode);
+      });
+      document.getElementById('select-all-btn')?.addEventListener('click', () => {
+        this.selectAllVisibleBooks();
+      });
+      document.getElementById('select-done-btn')?.addEventListener('click', () => {
+        this.setSelectMode(false);
+      });
+      document.getElementById('sel-new-folder-btn')?.addEventListener('click', () => {
+        if (this.selectedBookIds.size > 0) this.openFolderNameModal('create');
+      });
+      document.getElementById('sel-add-to-btn')?.addEventListener('click', () => {
+        this.openFolderPickerSheet();
+      });
+      document.getElementById('sel-remove-folder-btn')?.addEventListener('click', () => {
+        if (this.drilldown?.type === 'folder' && this.selectedBookIds.size > 0) {
+          this.removeBooksFromFolder(this.drilldown.value, Array.from(this.selectedBookIds));
+        }
+      });
+      document.getElementById('sel-delete-books-btn')?.addEventListener('click', () => {
+        this.deleteSelectedBooks();
+      });
+
+      // Folder Header Bar (Rename / Delete folder inside folder drilldown)
+      document.getElementById('folder-rename-btn')?.addEventListener('click', () => {
+        if (this.drilldown?.type === 'folder') {
+          this.openFolderNameModal('rename', this.drilldown.value);
+        }
+      });
+      document.getElementById('folder-delete-btn')?.addEventListener('click', () => {
+        if (this.drilldown?.type === 'folder') {
+          this.deleteFolderOnly(this.drilldown.value);
+        }
+      });
+
+      // Folder Picker Bottom Sheet
+      document.getElementById('folder-picker-close')?.addEventListener('click', () => this.closeAllSheets());
+      document.getElementById('folder-picker-backdrop')?.addEventListener('click', () => this.closeAllSheets());
+      document.getElementById('folder-picker-body')?.addEventListener('click', (e) => {
+        if (e.target.closest('[data-picker-new-folder]')) {
+          this.openFolderNameModal('create');
+          return;
+        }
+        const pickFolder = e.target.closest('[data-pick-folder]');
+        if (pickFolder) {
+          this.addBooksToFolder(pickFolder.dataset.pickFolder, Array.from(this.selectedBookIds));
+          return;
+        }
+        const pickStatus = e.target.closest('[data-picker-status]');
+        if (pickStatus) {
+          this.markSelectedBooksStatus(pickStatus.dataset.pickerStatus);
+        }
+      });
+
+      // Create / Rename Folder Modal
+      document.getElementById('folder-name-close')?.addEventListener('click', () => this.closeAllSheets());
+      document.getElementById('folder-name-backdrop')?.addEventListener('click', () => this.closeAllSheets());
+      document.getElementById('folder-name-cancel')?.addEventListener('click', () => this.closeAllSheets());
+      document.getElementById('folder-name-submit')?.addEventListener('click', () => this.submitFolderNameModal());
+      document.getElementById('folder-name-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.submitFolderNameModal();
         }
       });
 
@@ -3142,12 +3655,61 @@
         wpInp.value = '';
       });
 
-      // Pointerdown for freeform sticker dragging
+      // Pointerdown: freeform sticker dragging OR long-press on any book to enter Select Mode!
       const mainEl = document.getElementById('main-library');
+      let lpTimer = null;
+      let lpStartX = 0;
+      let lpStartY = 0;
+      const clearLongPress = () => {
+        if (lpTimer) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      };
+
       mainEl?.addEventListener('pointerdown', (e) => {
         const stickerEl = e.target.closest('.placed-sticker');
         if (stickerEl) {
           this.handleStickerPointerDown(e, stickerEl);
+          return;
+        }
+        if (this.editStickersMode || this.selectMode) return;
+        if (e.button && e.button !== 0) return;
+        if (e.target.closest('button, input, select')) return;
+
+        const bookEl = e.target.closest('#books-container [data-open-book]');
+        if (!bookEl) return;
+        const bookId = bookEl.dataset.openBook;
+        if (!bookId) return;
+
+        clearLongPress();
+        lpStartX = e.clientX;
+        lpStartY = e.clientY;
+        lpTimer = setTimeout(() => {
+          lpTimer = null;
+          this.suppressNextBookClick = true;
+          setTimeout(() => {
+            this.suppressNextBookClick = false;
+          }, 420);
+          navigator.vibrate?.(18);
+          this.setSelectMode(true, bookId);
+        }, 420);
+      });
+
+      mainEl?.addEventListener('pointermove', (e) => {
+        if (!lpTimer) return;
+        if (Math.hypot(e.clientX - lpStartX, e.clientY - lpStartY) > 10) {
+          clearLongPress();
+        }
+      });
+      window.addEventListener('pointerup', clearLongPress);
+      window.addEventListener('pointercancel', clearLongPress);
+      window.addEventListener('scroll', clearLongPress, { passive: true });
+
+      // Prevent browser "Save image / Share" context menu on long-pressing book covers on S25 Ultra
+      mainEl?.addEventListener('contextmenu', (e) => {
+        if (e.target.closest('#books-container [data-open-book]')) {
+          e.preventDefault();
         }
       });
 
@@ -3160,6 +3722,35 @@
           this.selectedStickerId = null;
           document.querySelectorAll('.placed-sticker.selected').forEach((n) => n.classList.remove('selected'));
           this.updateStickerInspectorUI();
+          return;
+        }
+
+        // Handle Multi-Select Mode taps cleanly
+        if (this.selectMode) {
+          const bookCard = e.target.closest('[data-open-book]');
+          if (this.suppressNextBookClick) {
+            this.suppressNextBookClick = false;
+            return;
+          }
+          if (bookCard) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.toggleBookSelection(bookCard.dataset.openBook);
+          }
+          return;
+        }
+
+        if (this.suppressNextBookClick) {
+          this.suppressNextBookClick = false;
+          return;
+        }
+
+        const folderCard = e.target.closest('[data-open-folder]');
+        if (folderCard) {
+          const folder = this.getFolderById(folderCard.dataset.openFolder);
+          if (folder) {
+            this.setRoute('shelf', { type: 'folder', value: folder.id, label: folder.name });
+          }
           return;
         }
 
