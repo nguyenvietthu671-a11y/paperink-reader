@@ -1505,9 +1505,21 @@
     }
 
     // ---- Merged Book Data ----
+    canonicalSeriesKey(name) {
+      return String(name || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^the\s+/, '')
+        .replace(/[’']/g, "'")
+        .replace(/\s+/g, ' ');
+    }
+
     applyMetaOverrideToBook(book) {
       const ov = this.state.bookMetaOverrides?.[book.id];
       const merged = { ...book };
+      const metaMod = window.PaperInkMetadata;
+      const manualOverride = Boolean(ov?.manual);
+
       if (ov && typeof ov === 'object') {
         if (typeof ov.author === 'string' && ov.author.trim()) merged.author = ov.author.trim();
         if (typeof ov.series === 'string') merged.series = ov.series.trim();
@@ -1517,8 +1529,20 @@
         if (typeof ov.description === 'string' && ov.description.trim()) merged.description = ov.description.trim();
         merged.autoTaggedAt = ov.updatedAt || 0;
       }
-      if (!Array.isArray(merged.tags) || merged.tags.length === 0) {
-        const metaMod = window.PaperInkMetadata;
+
+      // Guard: never let Series name equal the Author's name (unless user explicitly saved it manually)
+      if (!manualOverride && merged.series && metaMod) {
+        if (typeof metaMod.cleanSeriesName === 'function') {
+          merged.series = metaMod.cleanSeriesName(merged.series, merged.author);
+        } else if (typeof metaMod.isSeriesSameAsAuthor === 'function' && metaMod.isSeriesSameAsAuthor(merged.series, merged.author)) {
+          merged.series = '';
+        }
+        if (!merged.series) {
+          merged.seriesIndex = null;
+        }
+      }
+
+      if (!Array.isArray(merged.tags) || merged.tags.length === 0 || (!manualOverride && !merged.series && merged.fileName)) {
         if (metaMod && typeof metaMod.analyzeBookMetadata === 'function') {
           const inferred = metaMod.analyzeBookMetadata({
             title: merged.title,
@@ -1539,8 +1563,10 @@
           if (!Array.isArray(merged.genres) || !merged.genres.length || (merged.genres.length === 1 && merged.genres[0] === 'General Fiction')) {
             merged.genres = inferred.genres;
           }
-          merged.tags = inferred.tags;
-        } else {
+          if (!Array.isArray(merged.tags) || merged.tags.length === 0) {
+            merged.tags = inferred.tags;
+          }
+        } else if (!Array.isArray(merged.tags)) {
           merged.tags = [];
         }
       }
@@ -2106,7 +2132,8 @@
         } else if (this.drilldown.type === 'author') {
           scoped = all.filter((b) => (b.author || '') === this.drilldown.value);
         } else if (this.drilldown.type === 'series') {
-          scoped = all.filter((b) => (b.series || '') === this.drilldown.value);
+          const targetKey = this.canonicalSeriesKey(this.drilldown.value);
+          scoped = all.filter((b) => b.series && this.canonicalSeriesKey(b.series) === targetKey);
         } else if (this.drilldown.type === 'folder') {
           const folder = this.getFolderById(this.drilldown.value);
           const idSet = new Set(folder?.bookIds || []);
@@ -2314,20 +2341,32 @@
         rows.push(books.slice(i, i + cols));
       }
 
-      const showSeriesBadge = this.drilldown?.type === 'series' || this.sortBy === 'series';
+      const showSeriesBadge =
+        this.route === 'series' || this.drilldown?.type === 'series' || this.sortBy === 'series';
+      const allLackSeriesIdx =
+        this.drilldown?.type === 'series' && books.length > 0 && books.every((b) => b.seriesIndex == null);
+      const indexFallbackMap = new Map();
+      if (allLackSeriesIdx) {
+        books.forEach((b, idx) => indexFallbackMap.set(b.id, idx + 1));
+      }
       const placed = Array.isArray(cfg.placedStickers) ? cfg.placedStickers : [];
 
       return rows
         .map((rowBooks, tierIdx) => {
-          const cellsHtml = rowBooks.map((b) => this.renderShelfBook(b, showSeriesBadge)).join('');
+          const cellsHtml = rowBooks
+            .map((b) => this.renderShelfBook(b, showSeriesBadge, indexFallbackMap.get(b.id) ?? null))
+            .join('');
           const labelsHtml = rowBooks
             .map((b) => {
               const rev = this.getBookReview(b.id);
               const showRatingBar = this.shelfFilter === 'reading' || rev.rating > 0;
+              const dispIdx = b.seriesIndex ?? indexFallbackMap.get(b.id) ?? null;
               return `
               <div class="shelf-book-caption" data-open-book="${escHtml(b.id)}">
                 <div class="shelf-book-title" title="${escHtml(b.title)}">${escHtml(b.title)}</div>
-                <div class="shelf-book-author">${escHtml(b.author)}</div>
+                <div class="shelf-book-author">${
+                  showSeriesBadge && dispIdx != null ? `Tập #${dispIdx} · ` : ''
+                }${escHtml(b.author)}</div>
                 ${
                   showRatingBar
                     ? `<div class="shelf-book-rating-row">
@@ -2396,14 +2435,15 @@
         .join('');
     }
 
-    renderShelfBook(book, showSeriesBadge = false) {
+    renderShelfBook(book, showSeriesBadge = false, fallbackIdx = null) {
       const pct = book.progress ? Math.round(book.progress.bookPercent || 0) : 0;
       const isDl = this.downloadingIds.has(book.id);
       const offlineBtnTitle = book.isOffline ? 'Đã lưu Offline (chạm để gỡ)' : 'Lưu đọc Offline';
-      const idxBadge =
-        showSeriesBadge && book.seriesIndex != null
-          ? `<span class="series-num-badge tabular">#${book.seriesIndex}</span>`
-          : '';
+      const dispIdx = book.seriesIndex ?? fallbackIdx;
+      const hasSeriesBadge = Boolean(showSeriesBadge && dispIdx != null);
+      const idxBadge = hasSeriesBadge
+        ? `<span class="series-num-badge tabular" title="Quyển #${dispIdx}${book.series ? ` · ${escHtml(book.series)}` : ''}">#${dispIdx}</span>`
+        : '';
 
       // Pure pristine cover: only a whisper-subtle corner badge if saved offline, or hover action on PC
       const offlineIndicator = isDl
@@ -2417,7 +2457,7 @@
       const moreInfoBtn = `<button class="cover-more-btn" data-open-book-info="${escHtml(book.id)}" type="button" title="Xem thông tin sách" aria-label="Xem thông tin sách ${escHtml(book.title)}">${ICONS.moreVert}</button>`;
 
       return `
-        <article class="shelf-book ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
+        <article class="shelf-book ${isSel ? 'selected' : ''} ${hasSeriesBadge ? 'has-series-badge' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
           <div class="shelf-book-stand">
             <div class="shelf-book-cover">
               ${this.renderCoverMarkup(book)}
@@ -2437,11 +2477,12 @@
       const pct = book.progress ? Math.round(book.progress.bookPercent || 0) : 0;
       const isDl = this.downloadingIds.has(book.id);
       const offlineBtnTitle = book.isOffline ? 'Đã lưu Offline (chạm để gỡ)' : 'Lưu đọc Offline';
-      const showSeriesBadge = this.drilldown?.type === 'series' || this.sortBy === 'series';
-      const idxBadge =
-        showSeriesBadge && book.seriesIndex != null
-          ? `<span class="series-num-badge tabular">#${book.seriesIndex}</span>`
-          : '';
+      const showSeriesBadge =
+        this.route === 'series' || this.drilldown?.type === 'series' || this.sortBy === 'series';
+      const hasSeriesBadge = Boolean(showSeriesBadge && book.seriesIndex != null);
+      const idxBadge = hasSeriesBadge
+        ? `<span class="series-num-badge tabular" title="Quyển #${book.seriesIndex}${book.series ? ` · ${escHtml(book.series)}` : ''}">#${book.seriesIndex}</span>`
+        : '';
 
       const offlineIndicator = isDl
         ? `<button class="cover-corner-btn loading" data-toggle-offline="${escHtml(book.id)}" type="button" disabled>${ICONS.spinner}</button>`
@@ -2454,7 +2495,7 @@
       const moreInfoBtn = `<button class="cover-more-btn" data-open-book-info="${escHtml(book.id)}" type="button" title="Xem thông tin sách" aria-label="Xem thông tin sách ${escHtml(book.title)}">${ICONS.moreVert}</button>`;
 
       return `
-        <article class="book-card ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
+        <article class="book-card ${isSel ? 'selected' : ''} ${hasSeriesBadge ? 'has-series-badge' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
           <div class="book-cover-wrap">
             ${this.renderCoverMarkup(book)}
             ${idxBadge}
@@ -2464,7 +2505,9 @@
             ${pct > 0 ? `<div class="cover-progress"><div style="width:${pct}%"></div></div>` : ''}
           </div>
           <div class="book-card-title" title="${escHtml(book.title)}">${escHtml(book.title)}</div>
-          <div class="book-card-author">${escHtml(book.author)}</div>
+          <div class="book-card-author">${
+            hasSeriesBadge ? `Tập #${book.seriesIndex} · ` : ''
+          }${escHtml(book.author)}</div>
         </article>
       `;
     }
@@ -2476,14 +2519,20 @@
       const offlineIcon = isDl ? ICONS.spinner : book.isOffline ? ICONS.check : ICONS.download;
       const offlineBadge = book.isOffline ? `<span class="offline-pill">Offline</span>` : '';
       const isSel = this.selectedBookIds.has(book.id);
+      const showSeriesBadge =
+        this.route === 'series' || this.drilldown?.type === 'series' || this.sortBy === 'series';
+      const hasSeriesBadge = Boolean(showSeriesBadge && book.seriesIndex != null);
 
       return `
         <article class="book-row ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
           <span class="book-select-badge row-select-badge" aria-hidden="true">${ICONS.check}</span>
-          <div class="book-row-cover">${this.renderCoverMarkup(book)}</div>
+          <div class="book-row-cover">
+            ${this.renderCoverMarkup(book)}
+            ${hasSeriesBadge ? `<span class="series-num-badge row-cover-badge tabular">#${book.seriesIndex}</span>` : ''}
+          </div>
           <div class="book-row-meta">
             <div class="book-row-title">${
-              book.seriesIndex != null && this.drilldown?.type === 'series'
+              hasSeriesBadge
                 ? `<span class="inline-series-num">#${book.seriesIndex}</span> `
                 : ''
             }${escHtml(book.title)}</div>
@@ -2799,7 +2848,9 @@
       if (!grid) return;
 
       const groups = new Map();
+      const seriesDisplayNames = new Map();
       const type = this.route === 'genres' ? 'genre' : this.route === 'authors' ? 'author' : 'series';
+      const metaMod = window.PaperInkMetadata;
 
       for (const book of all) {
         if (type === 'genre') {
@@ -2813,12 +2864,28 @@
           groups.get(a).push(book);
         } else {
           if (!book.series) continue;
-          if (!groups.has(book.series)) groups.set(book.series, []);
-          groups.get(book.series).push(book);
+          const manualOv = Boolean(this.state.bookMetaOverrides?.[book.id]?.manual);
+          if (!manualOv && metaMod?.isSeriesSameAsAuthor?.(book.series, book.author)) {
+            continue;
+          }
+          const key = this.canonicalSeriesKey(book.series);
+          if (!key) continue;
+          if (!groups.has(key)) {
+            groups.set(key, []);
+            seriesDisplayNames.set(key, book.series);
+          } else {
+            // Prefer shorter canonical name without leading "The " when another book omits it
+            const prevName = seriesDisplayNames.get(key) || book.series;
+            if (/^the\s+/i.test(prevName) && !/^the\s+/i.test(book.series)) {
+              seriesDisplayNames.set(key, book.series);
+            }
+          }
+          groups.get(key).push(book);
         }
       }
 
-      let list = Array.from(groups.entries()).map(([name, books]) => {
+      let list = Array.from(groups.entries()).map(([rawKey, books]) => {
+        const name = type === 'series' ? seriesDisplayNames.get(rawKey) || rawKey : rawKey;
         if (type === 'series') {
           books.sort((a, b) => (a.seriesIndex ?? 9999) - (b.seriesIndex ?? 9999));
         }
@@ -2854,7 +2921,14 @@
         .map((g) => {
           const covers = g.books.slice(0, 3);
           const fanHtml = covers
-            .map((b, idx) => `<div class="fan-cover fan-${idx}">${this.renderCoverMarkup(b)}</div>`)
+            .map(
+              (b, idx) =>
+                `<div class="fan-cover fan-${idx}">${this.renderCoverMarkup(b)}${
+                  type === 'series' && b.seriesIndex != null
+                    ? `<span class="fan-series-badge tabular">#${b.seriesIndex}</span>`
+                    : ''
+                }</div>`
+            )
             .join('');
 
           const pct = g.count > 0 ? Math.round((g.readCount / g.count) * 100) : 0;
@@ -3660,6 +3734,7 @@
         genres: genres.length ? genres.slice(0, 6) : ['General Fiction'],
         tags: tags.slice(0, 10),
         description: existing?.description || '',
+        manual: true,
         updatedAt: Date.now(),
       };
       if (!this.state.bookMetaOverrides) this.state.bookMetaOverrides = {};

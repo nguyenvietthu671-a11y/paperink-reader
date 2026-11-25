@@ -1280,16 +1280,40 @@ html[data-theme='amoled'] #warmth-overlay {
 .series-num-badge {
   position: absolute;
   top: 6px;
-  left: 6px;
-  z-index: 4;
-  padding: 2px 7px;
+  right: 6px;
+  left: auto;
+  z-index: 6;
+  padding: 2.5px 8px;
   border-radius: var(--radius-pill);
-  background: rgba(18, 18, 20, 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color: #ffffff;
-  font-size: 0.66rem;
-  font-weight: 700;
+  background: var(--md-primary, #0b57d0);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.34);
+  color: var(--md-on-primary, #ffffff);
+  font-size: 0.69rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+}
+
+.series-num-badge.row-cover-badge {
+  top: 3px;
+  right: 3px;
+  padding: 1px 5px;
+  font-size: 0.58rem;
+}
+
+.shelf-book.has-series-badge .cover-more-btn,
+.book-card.has-series-badge .cover-more-btn {
+  top: 34px;
+}
+
+.has-series-badge .cover-fallback-title {
+  padding-right: 32px;
+}
+
+.lib-title-cluster:has(#drilldown-back-btn:not(.hidden)) .apple-page-title {
+  font-size: 1.15rem;
 }
 
 /* ==================== FREEFORM DRAGGABLE STICKER LAYER ==================== */
@@ -1652,6 +1676,7 @@ html[data-theme='amoled'] .shelf-theme-slate {
 }
 
 .book-row-cover {
+  position: relative;
   flex: 0 0 42px;
   height: 62px;
   border-radius: 6px;
@@ -1774,6 +1799,23 @@ html[data-theme='amoled'] .shelf-theme-slate {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.fan-series-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 4;
+  padding: 1.5px 5.5px;
+  border-radius: var(--radius-pill);
+  background: var(--md-primary, #0b57d0);
+  color: var(--md-on-primary, #ffffff);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.32);
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1.15;
+  pointer-events: none;
 }
 
 .fan-0 { left: 0; z-index: 3; }

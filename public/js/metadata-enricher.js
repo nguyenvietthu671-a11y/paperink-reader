@@ -81,75 +81,200 @@
     return map[s] ?? null;
   }
 
-  function cleanSeriesName(raw) {
-    let s = decodeEntities(String(raw || ''))
-      .replace(/^the\s+(?=[A-Z])/i, (m) => m)
-      .replace(/\s*(?:series|trilogy|saga|chronicles?|novels?|books?)\s*$/i, (m) =>
-        /trilogy|saga|chronicles?/i.test(m) ? m : ''
-      )
-      .replace(/\s*(?:tập|quyển|phần|vol\.?|volume|part)\s*$/i, '')
-      .replace(/^[\s\-–—:,#]+|[\s\-–—:,#]+$/g, '')
+  function normalizePersonTokens(str) {
+    return decodeEntities(String(str || ''))
+      .toLowerCase()
+      .replace(/[’']s\b/g, '')
+      .replace(/[^a-z0-9\u00c0-\u024f\u1e00-\u1eff\s]/gi, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+  }
+
+  function isSeriesSameAsAuthor(series, author) {
+    if (!series || !author || isUnknownAuthor(author)) return false;
+    const sClean = decodeEntities(String(series))
+      .replace(/\b(bestselling|new york times|international|psychological|gripping|acclaimed|classic|thriller|mystery|novel|series|collection|works|books)\b/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    if (!s || s.length < 2 || s.length > 72 || /^\d+$/.test(s)) return '';
+    const sTokens = normalizePersonTokens(sClean);
+    if (!sTokens.length) return true;
+    const sJoined = sTokens.join('');
+
+    const authorParts = String(author)
+      .split(/[,;&]+|\band\b/i)
+      .map((a) => normalizeSingleAuthor(a))
+      .filter((a) => a && !isUnknownAuthor(a));
+
+    // Also include whole normalized author string
+    const fullNorm = normalizeAuthor(author);
+    if (fullNorm) {
+      for (const a of fullNorm.split(',').map((x) => x.trim()).filter(Boolean)) {
+        if (!authorParts.includes(a)) authorParts.push(a);
+      }
+    }
+
+    for (const a of authorParts) {
+      const aTokens = normalizePersonTokens(a);
+      if (!aTokens.length) continue;
+      const aJoined = aTokens.join('');
+      const aRevJoined = [...aTokens].reverse().join('');
+      if (sJoined === aJoined || sJoined === aRevJoined) return true;
+      // Same token set regardless of order (e.g. "Patterson James" vs "James Patterson")
+      if (
+        sTokens.length === aTokens.length &&
+        sTokens.every((t) => aTokens.includes(t))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function stripAuthorPrefixFromSeries(series, author) {
+    if (!series || !author || isUnknownAuthor(author)) return series;
+    let out = series;
+    const authorList = normalizeAuthor(author)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const a of authorList) {
+      const escaped = a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      out = out
+        .replace(new RegExp(`^${escaped}(?:[’']s)?\\s+(?:bestselling\\s+|#?1\\s+new\\s+york\\s+times\\s+bestselling\\s+)?`, 'i'), '')
+        .trim();
+    }
+    return out;
+  }
+
+  function cleanSeriesName(raw, author = '') {
+    let s = decodeEntities(String(raw || ''))
+      .replace(/\s*\((?:unabridged|abridged|illustrated|annotated)\)\s*/gi, ' ')
+      .replace(/\s*:\s*(?:summary|book analysis|conversation starters|study guide).*$/i, '')
+      .replace(/\s+\bby\s+[A-Z][\w\s.'-]+$/i, '')
+      .replace(/^(?:an?\s+)(?=[A-Z0-9])/i, '')
+      .replace(/\s*(?:crime\s+thriller|psychological\s+thriller|detective\s+series|mystery\s+series|thriller\s+series)\s*$/i, '')
+      .replace(/\s*(?:series|trilogy|saga|chronicles?|novels?|books?|mysteries|investigations?|adventures?|files|cases)\s*$/i, (m) =>
+        /trilogy|saga|chronicles?/i.test(m) ? m : ''
+      )
+      .replace(/^(.{4,}?)\s+(?:mystery|thriller)\s*$/i, (_, baseName) =>
+        /^[A-Z0-9]{2,4}$/.test(baseName.trim()) ? `${baseName.trim()} Thriller` : baseName
+      )
+      .replace(/\s*(?:tập|quyển|phần|vol\.?|volume|part|bk\.?)\s*$/i, '')
+      .replace(/^[\s\-–—:,#•_]+|[\s\-–—:,#•_]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (author) {
+      s = stripAuthorPrefixFromSeries(s, author);
+    }
+    if (!s || s.length < 2 || s.length > 68 || /^\d+$/.test(s)) return '';
     if (
-      /^(edition|version|unabridged|illustrated|annotated|retail|epub|pdf|kindle|z-lib|oceanofpdf|tập|quyển|phần|book|vol\.?|volume|part)$/i.test(
+      /^(edition|first edition|version|unabridged|abridged|illustrated|annotated|retail|epub|pdf|kindle|z-lib|z-library|oceanofpdf|calibre|none|novel|a novel|a thriller|a mystery|short story|tập|quyển|phần|book|vol\.?|volume|part|bestseller|new york times)$/i.test(
         s
       )
     ) {
       return '';
     }
+    if (/award|finalist|prize|isbn|publisher|penguin|harpercollins|random house|simon\s*&\s*schuster/i.test(s)) {
+      return '';
+    }
+    // Capitalize leading lowercase word in English series (e.g. "alex Cross" -> "Alex Cross")
+    if (/^[a-z]/.test(s)) {
+      s = s.charAt(0).toUpperCase() + s.slice(1);
+    }
+    if (author && isSeriesSameAsAuthor(s, author)) {
+      return '';
+    }
     return s;
   }
 
-  function extractSeriesFromText(title = '', fileName = '', description = '') {
+  function extractSeriesFromText(title = '', fileName = '', description = '', author = '') {
     let series = '';
     let seriesIndex = null;
-    let cleanTitle = decodeEntities(String(title || '')).trim();
+    let cleanTitle = decodeEntities(String(title || ''))
+      .replace(/#(\d+)_(\d+)\b/g, '#$1.$2')
+      .trim();
+
+    const stripNoiseFromFile = (fn) =>
+      decodeEntities(String(fn || ''))
+        .replace(/\.epub$/i, '')
+        .replace(/#(\d+)_(\d+)\b/g, '#$1.$2')
+        .replace(/^_?OceanofPDF\.com_/i, '')
+        .replace(/\s*\((?:z-library|z-lib|1lib)[^)]*\)/gi, '')
+        .replace(/\s*--\s*Anna[’']?s Archive.*$/i, '')
+        .replace(/_/g, ' ')
+        .trim();
 
     const tryParen = (source, stripFromTitle = false) => {
       if (!source || series) return;
-      // Matches "(Sherlock Holmes, #1)", "(Dune Book 2)", "[Mistborn 03]", "(Kiếm Lai - Tập 2)"
-      const re = /\s*[\(\[]([^()\[\]]{2,68}?)(?:[,:\-\s]+)?(?:#|book\s+|vol\.?\s*|volume\s+|part\s+|tập\s+|quyển\s+|phần\s+|no\.?\s*)?(\d+(?:\.\d+)?)\s*[\)\]]/i;
-      const m = source.match(re);
-      if (m) {
-        const cand = cleanSeriesName(m[1]);
-        const idx = parseFloat(m[2]);
-        // Avoid false positive years like "(1984)" or "(2023)"
-        if (cand && !Number.isNaN(idx) && idx > 0 && idx < 500) {
-          series = cand;
-          seriesIndex = idx;
-          if (stripFromTitle) {
-            const stripped = source.replace(m[0], '').replace(/\s+/g, ' ').trim();
-            if (stripped.length >= 2) cleanTitle = stripped;
+      // Scan all (...) or [...] groups in source so we skip author parens and find "(Series #1)"
+      const groupRe = /\s*([\(\[])([^()\[\]]{2,68}?)([\)\]])/g;
+      let match;
+      while ((match = groupRe.exec(source)) !== null) {
+        const inner = match[2].trim();
+        const m = inner.match(
+          /^(.{2,60}?)(?:[,:\-\s]+)(?:#|book\s+|bk\.?\s*|vol\.?\s*|volume\s+|part\s+|tập\s+|quyển\s+|phần\s+|no\.?\s*)?(\d+(?:\.\d+)?)$/i
+        );
+        if (m) {
+          const cand = cleanSeriesName(m[1], author);
+          const idx = parseFloat(m[2]);
+          // Avoid false positive years like "(1984)" or "(2023)" unless explicitly prefixed with #/Book
+          const hasExplicitWord = /(?:#|book|bk|vol|part|tập|quyển|phần)\s*\d/i.test(inner);
+          if (cand && !Number.isNaN(idx) && idx >= 0 && (idx < 500 || hasExplicitWord) && !(idx >= 1800 && idx <= 2099 && !hasExplicitWord)) {
+            series = cand;
+            seriesIndex = idx;
+            if (stripFromTitle) {
+              const stripped = source.replace(match[0], '').replace(/\s+/g, ' ').trim();
+              if (stripped.length >= 2) cleanTitle = stripped;
+            }
+            return;
           }
         }
       }
     };
 
     tryParen(cleanTitle, true);
-    tryParen(decodeEntities(String(fileName || '')).replace(/\.epub$/i, '').replace(/_/g, ' '), false);
+    const cleanedFileSource = stripNoiseFromFile(fileName);
+    tryParen(cleanedFileSource.split(' -- ')[0], false);
 
-    // Pattern: "(A Sherlock Holmes Novel)" or "(A Cormoran Strike Mystery)" in title
+    // Pattern: "Title: Series Name, Book 4" or "Title _ Gabriel Allon Series, Book 4" or "Title - Detective Erika Foster 5"
     if (!series && cleanTitle) {
-      const novelOfRe = /\s*[\(\[]\s*(?:an?\s+)?([A-Z][\w\s'&.-]{2,48}?)\s+(?:novel|mystery|thriller|adventure|story|case|chronicle|book|trilogy)\s*[\)\]]/i;
-      const m = cleanTitle.match(novelOfRe);
-      if (m) {
-        const cand = cleanSeriesName(m[1]);
-        if (cand) {
+      const colonSubRe =
+        /^(.{2,60}?)\s*(?:[:•—–]|_|\s-\s)\s*([A-Z][\w\s'&.-]{2,48}?)(?:[,:\s]+)(?:series[,:\s]+)?(?:#|book\s+|bk\.?\s*|vol\.?\s*|tập\s+|quyển\s+)(\d+(?:\.\d+)?)\b/i;
+      const mSub = cleanTitle.match(colonSubRe);
+      if (mSub) {
+        const cand = cleanSeriesName(mSub[2], author);
+        const idx = parseFloat(mSub[3]);
+        if (cand && !Number.isNaN(idx) && idx < 500) {
           series = cand;
-          const stripped = cleanTitle.replace(m[0], '').replace(/\s+/g, ' ').trim();
+          seriesIndex = idx;
+          const stripped = mSub[1].replace(/\s*#\d+(?:\.\d+)?\s*$/, '').trim();
           if (stripped.length >= 2) cleanTitle = stripped;
         }
       }
     }
 
-    // Pattern: "Series Name: Book 2" or "Title - Tập 3" / "Title - Quyển 2"
+    // Pattern: "(A Sherlock Holmes Novel)" or ": A Jack Reacher Novel" in title (guarded against Author Name!)
+    if (!series && cleanTitle) {
+      const novelOfRe =
+        /(?:\s*[\(\[]\s*|\s*[:\-–—_]\s*)(?:an?\s+)?([A-Z0-9][\w\s'&.-]{2,44}?)\s+(?:novel|mystery|mysteries|thriller|adventure|story|case|chronicle|trilogy)\s*[\)\]]?$/i;
+      const m = cleanTitle.match(novelOfRe);
+      if (m) {
+        const cand = cleanSeriesName(m[1], author);
+        if (cand) {
+          series = cand;
+          const stripped = cleanTitle.slice(0, m.index).replace(/\s+/g, ' ').trim();
+          if (stripped.length >= 2) cleanTitle = stripped;
+        }
+      }
+    }
+
+    // Pattern: "Đấu Phá Thương Khung - Tập 3" / "Title - Quyển 2" (only when prefix is NOT the author!)
     if (!series && cleanTitle) {
       const viRe = /^(.{2,55}?)\s*[-–—:,]?\s*(?:tập|quyển|phần|book|vol\.?)\s*(\d+(?:\.\d+)?)\b/i;
       const m = cleanTitle.match(viRe);
       if (m) {
-        const cand = cleanSeriesName(m[1]);
+        const cand = cleanSeriesName(m[1], author);
         const idx = parseFloat(m[2]);
         if (cand && !Number.isNaN(idx) && idx > 0 && idx < 500) {
           series = cand;
@@ -158,39 +283,34 @@
       }
     }
 
-    // Pattern in description: "Book One of the Kingkiller Chronicle", "first novel in the Cormoran Strike series", "A Jack Reacher Novel"
+    // Pattern in description: "Book One of the Kingkiller Chronicle", "first in the 4MK Thriller series"
     if (!series && description) {
-      const descRe1 =
-        /\b(?:book|volume|novel|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?([A-Z][A-Za-z0-9'\s&-]{2,52}?)\s+(?:series|trilogy|saga|quartet|cycle)\b/i;
-      const m1 = description.match(descRe1);
-      if (m1) {
-        const cand = cleanSeriesName(m1[2]);
-        if (cand) {
-          series = cand;
-          seriesIndex = parseNumberWord(m1[1]);
-        }
-      }
-      if (!series) {
-        const descRe1b =
-          /\b(?:book|volume|novel|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?([A-Z][A-Za-z0-9'\s&-]{2,52}?\s+chronicles?)\b/i;
-        const m1b = description.match(descRe1b);
-        if (m1b) {
-          const cand = cleanSeriesName(m1b[2]);
+      const descPatterns = [
+        {
+          re: /\b(?:book|volume|novel|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?)\s+(?:series|trilogy|saga|quartet|cycle)\b/i,
+          idxGroup: 1,
+          serGroup: 2,
+        },
+        {
+          re: /\b(?:book|volume|novel|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?\s+chronicles?)\b/i,
+          idxGroup: 1,
+          serGroup: 2,
+        },
+        {
+          re: /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+(?:st|nd|rd|th))\s+(?:(?:book|novel|installment|thriller|mystery)\s+)?in\s+(?:the\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?)\s+(?:series|trilogy|saga|mysteries|mystery|thriller)\b/i,
+          idxGroup: 1,
+          serGroup: 2,
+        },
+      ];
+      for (const p of descPatterns) {
+        const md = description.match(p.re);
+        if (md) {
+          const cand = cleanSeriesName(md[p.serGroup], author);
           if (cand) {
             series = cand;
-            seriesIndex = parseNumberWord(m1b[1]);
-          }
-        }
-      }
-      if (!series) {
-        const descRe2 =
-          /\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+(?:st|nd|rd|th))\s+(?:book|novel|installment)\s+in\s+(?:the\s+)?([A-Z][A-Za-z0-9'\s&-]{2,52}?)\s+(?:series|trilogy|saga|mystery|thriller)\b/i;
-        const m2 = description.match(descRe2);
-        if (m2) {
-          const cand = cleanSeriesName(m2[1]);
-          if (cand) {
-            series = cand;
-            seriesIndex = parseNumberWord(m2[0].split(/\s+/)[0].replace(/(st|nd|rd|th)$/i, ''));
+            const tok = String(md[p.idxGroup] || '').replace(/(st|nd|rd|th)$/i, '');
+            seriesIndex = parseNumberWord(tok);
+            break;
           }
         }
       }
@@ -198,10 +318,12 @@
 
     // Index fallback from filename/title if series already known
     if (series && seriesIndex == null) {
-      const idxMatch = `${fileName} ${title}`.match(/(?:#|book\s+|vol\.?\s*|tập\s+|quyển\s+)(\d+(?:\.\d+)?)/i);
+      const idxMatch = `${cleanedFileSource} ${title}`.match(
+        /(?:#|book\s+|bk\.?\s*|vol\.?\s*|tập\s+|quyển\s+|\(\s*)(\d+(?:\.\d+)?)\b/i
+      );
       if (idxMatch) {
         const n = parseFloat(idxMatch[1]);
-        if (!Number.isNaN(n) && n > 0 && n < 500) seriesIndex = n;
+        if (!Number.isNaN(n) && n >= 0 && n < 500) seriesIndex = n;
       }
     }
 
@@ -210,11 +332,13 @@
 
   function parseFilenameMeta(fileName) {
     let base = decodeEntities(String(fileName || '')).replace(/\.epub$/i, '');
+    base = base.replace(/#(\d+)_(\d+)\b/g, '#$1.$2');
     base = base.replace(/^_?OceanofPDF\.com_/i, '');
-    base = base.replace(/\s*\(z-library\.sk.*?\)/gi, '');
-    base = base.replace(/\s*\(z-lib\.org.*?\)/gi, '');
-    base = base.replace(/\s*--\s*Anna[’']?s Archive$/i, '');
-    base = base.replace(/\s*\[(?:epub|retail|v\d+|converted)\]\s*/gi, ' ').trim();
+    base = base.replace(/\s*\((?:z-library|z-lib|1lib)[^)]*\)/gi, '');
+    base = base.replace(/\s*--\s*Anna[’']?s Archive.*$/i, '');
+    base = base.replace(/\s*\[(?:epub|ebook[^\]]*|retail|v\d+|converted)\]\s*/gi, ' ').trim();
+    // Strip trailing Windows duplicate counter like " (1)" ONLY when preceded by another paren or author
+    base = base.replace(/(\))\s*\(\d\)$/, '$1').trim();
 
     let title = base;
     let author = '';
@@ -223,9 +347,29 @@
 
     if (base.includes(' -- ')) {
       const parts = base.split(' -- ').map((s) => s.trim()).filter(Boolean);
-      title = (parts[0] || base).replace(/_/g, ' ').trim();
-      if (parts[1] && !/^\d{4}$/.test(parts[1])) {
-        author = normalizeAuthor(parts[1].replace(/_/g, ' '));
+      title = (parts[0] || base)
+        .replace(/\s+_\s*/g, ': ')
+        .replace(/_\s+/g, ': ')
+        .replace(/_/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (parts[1] && !/^\d{4}$/.test(parts[1]) && !/^none$/i.test(parts[1])) {
+        author = normalizeAuthor(parts[1].replace(/\[[^\]]+\]/g, '').replace(/_/g, ' '));
+      }
+      // Anna's Archive often stores series in parts[2]: "Gabriel Allon, 4, 2003" or "Alex Cross, bk_ 20"
+      if (parts[2]) {
+        const seg = parts[2].replace(/bk_\s*/i, '#').replace(/_/g, ' ').trim();
+        const segMatch = seg.match(
+          /^([A-Z0-9][^,;()]{1,48}?)(?:[,:\s]+)(?:#|book\s+|vol\.?\s*)?(\d+(?:\.\d+)?)\b/i
+        );
+        if (segMatch) {
+          const idx = parseFloat(segMatch[2]);
+          const cand = cleanSeriesName(segMatch[1], author);
+          if (cand && !Number.isNaN(idx) && idx >= 0 && idx < 500 && !(idx >= 1800 && idx <= 2099)) {
+            series = cand;
+            seriesIndex = idx;
+          }
+        }
       }
     } else if (base.includes('_-_')) {
       const parts = base.split('_-_').map((s) => s.replace(/_/g, ' ').trim()).filter(Boolean);
@@ -233,43 +377,141 @@
       if (parts[1]) {
         author = normalizeAuthor(parts[1].replace(/\(\d+\)$/, '').trim());
       }
-    } else if (/\s-\s/.test(base)) {
-      const parts = base.split(/\s-\s/).map((s) => s.replace(/_/g, ' ').trim()).filter(Boolean);
-      if (parts.length >= 3) {
-        // Vietnamese/volume pattern: "Đấu Phá Thương Khung - Tập 2 - Thiên Tàm Thổ Đậu"
-        const volMatch = parts[1].match(/^(?:tập|quyển|phần|book|vol\.?|volume|part|#)\s*(\d+(?:\.\d+)?)$/i);
-        if (volMatch) {
-          series = cleanSeriesName(parts[0]);
-          seriesIndex = parseFloat(volMatch[1]);
-          title = `${parts[0]} - ${parts[1]}`;
-          author = normalizeAuthor(parts.slice(2).join(' - '));
-        } else {
-          // Common Calibre/eBook naming: "Author - Series 01 - Title"
-          const midMatch = parts[1].match(/^(.+?)\s+#?(\d+(?:\.\d+)?)$/);
-          const candSeries = midMatch ? cleanSeriesName(midMatch[1]) : '';
-          if (midMatch && candSeries) {
-            author = normalizeAuthor(parts[0]);
-            series = candSeries;
-            seriesIndex = parseFloat(midMatch[2]);
-            title = parts.slice(2).join(' - ');
-          } else {
-            title = parts[0];
-            author = normalizeAuthor(parts[parts.length - 1]);
+    } else {
+      // Z-Library format: "Title (Series 24) (Author Name)" or "Title (Author Name)"
+      const trailingParens = base.match(/^(.*?\S)\s*\(([^()]{3,64})\)\s*$/);
+      if (trailingParens) {
+        const inside = trailingParens[2].trim();
+        const looksLikeSeriesWithNum = /(?:#|book\s+|vol\.?\s*|tập\s+|\s)\d+(?:\.\d+)?$/i.test(inside);
+        if (!looksLikeSeriesWithNum && !/\b(trilogy|series|saga|edition|unabridged)\b/i.test(inside)) {
+          const cleanedInside = inside
+            .replace(/,?\s*[^,()]*\((?:translat|editor|illustrat)[^)]*\).*$/i, '')
+            .replace(/\s+etc\.?$/i, '')
+            .trim();
+          const candAuthor = normalizeAuthor(cleanedInside);
+          if (!isUnknownAuthor(candAuthor)) {
+            author = candAuthor;
+            base = trailingParens[1].trim();
+            title = base;
           }
         }
-      } else if (parts.length === 2) {
-        title = parts[0];
-        author = normalizeAuthor(parts[1]);
       }
-    } else {
-      title = base.replace(/_/g, ' ').trim();
+
+      if (/\s-\s/.test(base)) {
+        const parts = base.split(/\s-\s/).map((s) => s.replace(/_/g, ' ').trim()).filter(Boolean);
+        if (parts.length >= 3) {
+          // Vietnamese/volume pattern: "Đấu Phá Thương Khung - Tập 2 - Thiên Tàm Thổ Đậu"
+          const volMatch = parts[1].match(/^(?:tập|quyển|phần|book|vol\.?|volume|part|#)\s*(\d+(?:\.\d+)?)$/i);
+          if (volMatch) {
+            const tailAuthor = normalizeAuthor(parts.slice(2).join(' - '));
+            const cand = cleanSeriesName(parts[0], tailAuthor);
+            if (cand) series = cand;
+            seriesIndex = parseFloat(volMatch[1]);
+            title = `${parts[0]} - ${parts[1]}`;
+            author = tailAuthor;
+          } else {
+            // Common Calibre/eBook naming: "Author - Series 01 - Title"
+            const midMatch = parts[1].match(/^(.+?)\s+#?(\d+(?:\.\d+)?)$/);
+            const headAuthor = normalizeAuthor(parts[0]);
+            const candSeries = midMatch ? cleanSeriesName(midMatch[1], headAuthor) : '';
+            if (midMatch && candSeries) {
+              author = headAuthor;
+              series = candSeries;
+              seriesIndex = parseFloat(midMatch[2]);
+              title = parts.slice(2).join(' - ');
+            } else {
+              title = parts[0];
+              author = normalizeAuthor(parts[parts.length - 1]);
+            }
+          }
+        } else if (parts.length === 2) {
+          // Could be "Cold Blood - Detective Erika Foster 5" (when author was already stripped from Z-Lib paren!)
+          const rightSeriesMatch = author
+            ? parts[1].match(/^([A-Z][\w\s'&.-]{2,46}?)\s+#?(\d+(?:\.\d+)?)$/)
+            : null;
+          if (rightSeriesMatch) {
+            const cand = cleanSeriesName(rightSeriesMatch[1], author);
+            if (cand) {
+              title = parts[0];
+              series = cand;
+              seriesIndex = parseFloat(rightSeriesMatch[2]);
+            } else {
+              title = parts[0];
+              if (!author) author = normalizeAuthor(parts[1]);
+            }
+          } else {
+            title = parts[0];
+            if (!author) author = normalizeAuthor(parts[1]);
+          }
+        }
+      } else {
+        title = base.replace(/_/g, ' ').trim();
+      }
     }
 
-    const fromTitle = extractSeriesFromText(title, fileName, '');
+    // Pre-check "Title #19 _ Series_ Book 19" or "Title _ Series Series, Book 4" BEFORE leadSeq!
+    const earlySub = title.match(
+      /^(.{2,60}?)\s*(?:[:•—–]|\s-\s|\s+_\s*|\s*_\s+)\s*([A-Z][\w\s'&.-]{2,48}?)(?:[,:\s]+)(?:series[,:\s]+)?(?:#|book\s+|bk\.?\s*|vol\.?\s*|tập\s+|quyển\s+)(\d+(?:\.\d+)?)\b/i
+    );
+    if (earlySub) {
+      const cand = cleanSeriesName(earlySub[2], author);
+      const idx = parseFloat(earlySub[3]);
+      if (cand && !Number.isNaN(idx) && idx < 500) {
+        series = series || cand;
+        seriesIndex = seriesIndex ?? idx;
+        title = earlySub[1].replace(/\s*#\d+(?:\.\d+)?\s*$/, '').trim();
+      }
+    }
+
+    // Handle leading "[Series 04] • Title", "Series 04_ Title", "Series 01-Title", or "Prefix 08 Title"
+    const leadBracket = title.match(/^\[([^[\]]{2,52}?)\s+#?(\d+(?:\.\d+)?)\]\s*[•\-–—:]*\s*(.+)$/);
+    if (leadBracket) {
+      const idx = parseFloat(leadBracket[2]);
+      const restTitle = leadBracket[3].trim();
+      const cand = cleanSeriesName(leadBracket[1], author);
+      if (restTitle.length >= 2 && !Number.isNaN(idx)) {
+        title = restTitle;
+        seriesIndex = seriesIndex ?? idx;
+        if (cand && !series) series = cand;
+      }
+    } else if (!series) {
+      const leadSeq = title.match(
+        /^([A-Z][\w\s'&.-]{2,40}?)\s+(\d{1,2}(?:\.\d+)?)(?:\s*[_:\-–—]\s*|\s+)(.+)$/
+      );
+      if (leadSeq) {
+        const prefix = leadSeq[1].trim();
+        const idx = parseFloat(leadSeq[2]);
+        const restTitle = leadSeq[3].trim();
+        if (restTitle.length >= 2 && !Number.isNaN(idx) && idx > 0 && idx < 200) {
+          if (author && isSeriesSameAsAuthor(prefix, author)) {
+            // Prefix is the Author (e.g. "Lee Child 08 The Enemy") — strip author & number from title, NEVER set series = author!
+            title = restTitle;
+            seriesIndex = seriesIndex ?? idx;
+          } else if (!author && /^[A-Z][a-z]+\s+[A-Z][a-z]+$/.test(prefix) && /^\d{2}$/.test(leadSeq[2])) {
+            // Pattern "Lee Child 08 The Enemy" when author wasn't known yet: treat prefix as candidate author, NOT series!
+            author = normalizeAuthor(prefix);
+            title = restTitle;
+            seriesIndex = seriesIndex ?? idx;
+          } else {
+            const cand = cleanSeriesName(prefix, author);
+            if (cand && !series) series = cand;
+            seriesIndex = seriesIndex ?? idx;
+            title = restTitle;
+          }
+        }
+      }
+    }
+
+    const fromTitle = extractSeriesFromText(title, fileName, '', author);
     if (!series && fromTitle.series) {
       series = fromTitle.series;
-      seriesIndex = fromTitle.seriesIndex;
+      seriesIndex = seriesIndex ?? fromTitle.seriesIndex;
+    }
+    if (fromTitle.cleanTitle && fromTitle.cleanTitle.length >= 2) {
       title = fromTitle.cleanTitle;
+    }
+    if (series && isSeriesSameAsAuthor(series, author)) {
+      series = '';
     }
 
     return {
@@ -498,23 +740,32 @@
     }
 
     const description = decodeEntities(String(raw.description || '')).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    let series = cleanSeriesName(raw.series || '');
+    let series = cleanSeriesName(raw.series || '', author);
     let seriesIndex = raw.seriesIndex != null && !Number.isNaN(Number(raw.seriesIndex)) ? Number(raw.seriesIndex) : null;
 
+    // If raw.series was rejected because it equaled the author name, clear bogus seriesIndex unless confirmed by real series
+    if (raw.series && !series) {
+      seriesIndex = fileFallback.series && !isSeriesSameAsAuthor(fileFallback.series, author) ? fileFallback.seriesIndex : null;
+    }
+
     if (!series) {
-      const extracted = extractSeriesFromText(title, raw.fileName || '', description);
+      const extracted = extractSeriesFromText(title, raw.fileName || '', description, author);
       if (extracted.series) {
         series = extracted.series;
-        seriesIndex = extracted.seriesIndex;
+        seriesIndex = seriesIndex ?? extracted.seriesIndex;
         title = extracted.cleanTitle;
-      } else if (fileFallback.series) {
-        series = fileFallback.series;
-        seriesIndex = fileFallback.seriesIndex;
+      } else if (fileFallback.series && !isSeriesSameAsAuthor(fileFallback.series, author)) {
+        series = cleanSeriesName(fileFallback.series, author);
+        seriesIndex = seriesIndex ?? fileFallback.seriesIndex;
       }
     } else if (seriesIndex == null) {
-      const extracted = extractSeriesFromText(title, raw.fileName || '', description);
+      const extracted = extractSeriesFromText(title, raw.fileName || '', description, author);
       if (extracted.seriesIndex != null) seriesIndex = extracted.seriesIndex;
       else if (fileFallback.seriesIndex != null) seriesIndex = fileFallback.seriesIndex;
+    }
+
+    if (series && isSeriesSameAsAuthor(series, author)) {
+      series = '';
     }
 
     const subjects = Array.isArray(raw.subjects) ? raw.subjects : Array.isArray(raw.genres) ? raw.genres : [];
@@ -554,7 +805,20 @@
     }
   }
 
-  // Online Auto-Enrichment (Google Books API + Open Library API, CORS *, zero API key needed)
+  function titleMatchesBook(candidateTitle, targetTitle) {
+    const norm = (s) =>
+      decodeEntities(String(s || ''))
+        .toLowerCase()
+        .replace(/[^a-z0-9\u00c0-\u024f\u1e00-\u1eff\s]/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const c = norm(candidateTitle);
+    const t = norm(targetTitle);
+    if (!c || !t) return false;
+    return c === t || c.startsWith(`${t} `) || t.startsWith(`${c} `);
+  }
+
+  // Online Auto-Enrichment (Apple Books + Open Library + Google Books, CORS *, zero API key needed)
   async function enrichBookOnline(book) {
     const base = analyzeBookMetadata({
       title: book.title,
@@ -572,16 +836,24 @@
     if (!queryTitle || queryTitle.length < 2) return base;
 
     const hasRealAuthor = !isUnknownAuthor(base.author);
-    const gbQ = hasRealAuthor
-      ? `intitle:${queryTitle} inauthor:${base.author.split(',')[0].trim()}`
-      : `intitle:${queryTitle}`;
+    const primaryAuthor = hasRealAuthor ? base.author.split(',')[0].trim() : '';
+    const gbQ = hasRealAuthor ? `intitle:${queryTitle} inauthor:${primaryAuthor}` : `intitle:${queryTitle}`;
+    const appleTerm = hasRealAuthor ? `${queryTitle} ${primaryAuthor}` : queryTitle;
 
-    const [gbData, olData] = await Promise.all([
+    const [gbData, olData, appleEbookData, appleAudioData] = await Promise.all([
       fetchJsonWithTimeout(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(gbQ)}&maxResults=3`, 4500),
       fetchJsonWithTimeout(
         `https://openlibrary.org/search.json?title=${encodeURIComponent(queryTitle)}${
-          hasRealAuthor ? `&author=${encodeURIComponent(base.author.split(',')[0].trim())}` : ''
+          hasRealAuthor ? `&author=${encodeURIComponent(primaryAuthor)}` : ''
         }&limit=3&fields=title,author_name,subject,first_sentence`,
+        4500
+      ),
+      fetchJsonWithTimeout(
+        `https://itunes.apple.com/search?media=ebook&entity=ebook&limit=5&term=${encodeURIComponent(appleTerm)}`,
+        4500
+      ),
+      fetchJsonWithTimeout(
+        `https://itunes.apple.com/search?media=audiobook&entity=audiobook&limit=5&term=${encodeURIComponent(appleTerm)}`,
         4500
       ),
     ]);
@@ -605,8 +877,14 @@
       if ((!description || description.length < 40) && gbVol.description) {
         description = decodeEntities(gbVol.description).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1200);
       }
+      if (!series && gbVol.seriesInfo?.volumeSeries?.[0]?.seriesBookType) {
+        const disp = gbVol.seriesInfo.bookDisplayNumber;
+        if (disp && seriesIndex == null && !Number.isNaN(parseFloat(disp))) {
+          seriesIndex = parseFloat(disp);
+        }
+      }
       if (!series && gbVol.subtitle) {
-        const fromSub = extractSeriesFromText(`${gbVol.title || ''} (${gbVol.subtitle})`, '', gbVol.description || '');
+        const fromSub = extractSeriesFromText(`${gbVol.title || ''}: ${gbVol.subtitle}`, '', gbVol.description || '', author);
         if (fromSub.series) {
           series = fromSub.series;
           seriesIndex = seriesIndex ?? fromSub.seriesIndex;
@@ -615,7 +893,65 @@
       if (gbVol.language && !language) language = gbVol.language;
     }
 
-    // 2. Merge Open Library hit (extract canonical genres/tags only so LoC headings don't pollute genres)
+    // 2. Merge Apple Books eBook + Audiobook hits (CORS *, fast, rich series & book number titles!)
+    const appleEbooks = Array.isArray(appleEbookData?.results) ? appleEbookData.results : [];
+    const appleAudios = Array.isArray(appleAudioData?.results) ? appleAudioData.results : [];
+    const matchedEbook = appleEbooks.find(
+      (it) =>
+        titleMatchesBook(it.trackName, queryTitle) &&
+        !/\b(summary|analysis|conversation starters|study guide)\b/i.test(it.trackName || '')
+    );
+    if (matchedEbook) {
+      if (isUnknownAuthor(author) && matchedEbook.artistName) {
+        author = normalizeAuthor(matchedEbook.artistName);
+      }
+      if (Array.isArray(matchedEbook.genres)) {
+        extraSubjects.push(...matchedEbook.genres);
+      }
+      if ((!description || description.length < 40) && matchedEbook.description) {
+        description = decodeEntities(matchedEbook.description)
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 1200);
+      }
+    }
+
+    // Inspect matching Apple eBook & Audiobook titles for explicit series + book index!
+    // e.g. "36 Hours: Detective Kim Stone, Book 21 (Unabridged)" or "The Fourth Monkey (4MK)" or "The Enemy: A Jack Reacher Novel"
+    if (!series || seriesIndex == null) {
+      const candidateTitles = [
+        ...appleAudios.map((a) => a.collectionName || ''),
+        ...appleEbooks.map((e) => e.trackName || ''),
+      ].filter((t) => titleMatchesBook(t, queryTitle));
+
+      for (const rawCand of candidateTitles) {
+        const cleanedCand = decodeEntities(rawCand)
+          .replace(/\s*\((?:unabridged|abridged)\)\s*/gi, '')
+          .replace(/\s+by\s+[A-Z][\w\s.'-]+(?::\s*(?:summary|conversation starters|book analysis).*)?$/i, '')
+          .trim();
+        const ext = extractSeriesFromText(cleanedCand, '', '', author);
+        if (ext.series && !series) {
+          series = ext.series;
+        }
+        if (ext.seriesIndex != null && seriesIndex == null) {
+          seriesIndex = ext.seriesIndex;
+        }
+        // Also check trailing short paren like "The Fourth Monkey (4MK)" or "A Curious Beginning (Veronica Speedwell Mysteries)"
+        if (!series) {
+          const parenOnly = cleanedCand.match(/\(([^()]{2,48})\)\s*$/);
+          if (parenOnly) {
+            const candS = cleanSeriesName(parenOnly[1], author);
+            if (candS && !titleMatchesBook(candS, queryTitle)) {
+              series = candS;
+            }
+          }
+        }
+        if (series && seriesIndex != null) break;
+      }
+    }
+
+    // 3. Merge Open Library hit (extract canonical genres/tags only so LoC headings don't pollute genres)
     const olDoc = olData?.docs?.[0];
     let olExtraTags = [];
     if (olDoc) {
@@ -630,12 +966,27 @@
     }
 
     // Re-run series detection if description got enriched!
-    if (!series && description) {
-      const fromDesc = extractSeriesFromText(base.title, book.fileName || '', description);
-      if (fromDesc.series) {
+    if ((!series || seriesIndex == null) && description) {
+      const fromDesc = extractSeriesFromText('', '', description, author);
+      if (!series && fromDesc.series) {
         series = fromDesc.series;
-        seriesIndex = seriesIndex ?? fromDesc.seriesIndex;
       }
+      if (seriesIndex == null && fromDesc.seriesIndex != null) {
+        seriesIndex = fromDesc.seriesIndex;
+      }
+    }
+
+    // If online lookup found a real series and filename had an explicit book number (e.g. "Lee Child 08 The Enemy.epub"), preserve that book number!
+    if (series && seriesIndex == null && book.fileName) {
+      const fnParsed = parseFilenameMeta(book.fileName);
+      if (fnParsed.seriesIndex != null) {
+        seriesIndex = fnParsed.seriesIndex;
+      }
+    }
+
+    // Final strict author-vs-series guard!
+    if (series) {
+      series = cleanSeriesName(series, author);
     }
 
     const { genres, tags } = inferGenresAndTags({
@@ -663,12 +1014,14 @@
       tags: mergedTags,
       description,
       language: language || base.language || 'en',
-      enrichedOnline: Boolean(gbVol || olDoc),
+      enrichedOnline: Boolean(gbVol || olDoc || matchedEbook || appleAudios.length),
     };
   }
 
   return {
     normalizeAuthor,
+    isSeriesSameAsAuthor,
+    cleanSeriesName,
     parseFilenameMeta,
     extractSeriesFromText,
     inferGenresAndTags,
