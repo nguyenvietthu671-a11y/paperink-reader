@@ -248,6 +248,14 @@
       this.cloudGistId = (localStorage.getItem('paperink_cloud_gist_id') || '').trim();
       this.lastCloudSyncAt = 0;
 
+      this.currentUser = null;
+      try {
+        const savedUser = localStorage.getItem('paperink_user');
+        if (savedUser) this.currentUser = JSON.parse(savedUser);
+      } catch (_) {}
+      this.authToken = (localStorage.getItem('paperink_auth_token') || '').trim();
+      this._currentAccountPairUrl = '';
+
       this.dictUI = new window.PaperInkDictUI({
         onSaveVocab: (entry) => this.addVocabWord(entry),
         isWordSaved: (word) => this.isVocabWordSaved(word),
@@ -301,6 +309,7 @@
       this.checkUrlHashPairing();
       this.registerServiceWorker();
       this.bindUI();
+      this.updateAccountUI();
 
       await this.loadLocalData();
       this.applySettingsToDOM();
@@ -313,7 +322,45 @@
     checkUrlHashPairing() {
       try {
         const hash = window.location.hash || '';
-        if (hash.includes('cloud_token=')) {
+        if (hash.includes('account_pair=')) {
+          const raw = hash.replace(/^#+/, '');
+          const params = new URLSearchParams(raw);
+          const pairPayload = params.get('account_pair');
+          if (pairPayload) {
+            try {
+              const decoded = JSON.parse(decodeURIComponent(escape(atob(pairPayload))));
+              if (decoded && decoded.user) {
+                this.currentUser = decoded.user;
+                this.authToken = decoded.token || '';
+                localStorage.setItem('paperink_user', JSON.stringify(this.currentUser));
+                if (this.authToken) localStorage.setItem('paperink_auth_token', this.authToken);
+                if (decoded.cloudSync?.token) {
+                  this.cloudToken = decoded.cloudSync.token;
+                  localStorage.setItem('paperink_cloud_gist_token', this.cloudToken);
+                  if (decoded.cloudSync.gistId) {
+                    this.cloudGistId = decoded.cloudSync.gistId;
+                    localStorage.setItem('paperink_cloud_gist_id', this.cloudGistId);
+                  }
+                }
+                if (decoded.lanUrl && !this.customServerUrl) {
+                  this.customServerUrl = decoded.lanUrl;
+                  localStorage.setItem('paperink_server_url', decoded.lanUrl);
+                }
+                this.updateAccountUI();
+                if (window.history && window.history.replaceState) {
+                  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+                }
+                setTimeout(() => {
+                  this.toast(`Chào mừng ${this.currentUser.displayName || this.currentUser.username}! Đã đồng bộ tài khoản thành công.`);
+                  this.syncWithCloudGist(false);
+                  this.refreshFromServer(false);
+                }, 500);
+              }
+            } catch (err) {
+              console.warn('[PaperInk] account_pair decode error:', err);
+            }
+          }
+        } else if (hash.includes('cloud_token=')) {
           const raw = hash.replace(/^#+/, '');
           const params = new URLSearchParams(raw);
           const token = params.get('cloud_token');
@@ -4666,6 +4713,208 @@
       }
     }
 
+    openAccountModal() {
+      this.closeAllSheets();
+      document.getElementById('account-backdrop')?.classList.add('open');
+      document.getElementById('account-modal')?.classList.add('open');
+      this.updateAccountUI();
+    }
+
+    closeAccountModal() {
+      document.getElementById('account-backdrop')?.classList.remove('open');
+      document.getElementById('account-modal')?.classList.remove('open');
+    }
+
+    updateAccountUI() {
+      const isLogged = Boolean(this.currentUser && this.currentUser.username);
+      const guestView = document.getElementById('account-guest-view');
+      const userView = document.getElementById('account-user-view');
+      const headerDot = document.getElementById('header-account-dot');
+      const moreTitle = document.getElementById('more-account-title');
+      const moreSub = document.getElementById('more-account-subtitle');
+
+      headerDot?.classList.toggle('hidden', !isLogged);
+
+      if (isLogged) {
+        const dispName = this.currentUser.displayName || this.currentUser.username;
+        const initial = (dispName[0] || 'U').toUpperCase();
+
+        if (moreTitle) moreTitle.textContent = `Tài khoản: ${dispName}`;
+        if (moreSub) moreSub.textContent = `🟢 Đã kết nối · @${this.currentUser.username} · Tự động đồng bộ`;
+
+        guestView?.classList.add('hidden');
+        userView?.classList.remove('hidden');
+
+        const avatarEl = document.getElementById('account-user-avatar');
+        const nameEl = document.getElementById('account-user-name');
+        const handleEl = document.getElementById('account-user-handle');
+        const booksEl = document.getElementById('account-books-count');
+        const cloudEl = document.getElementById('account-cloud-status');
+        const qrBox = document.getElementById('account-qr');
+
+        if (avatarEl) avatarEl.textContent = initial;
+        if (nameEl) nameEl.textContent = dispName;
+        if (handleEl) handleEl.textContent = `@${this.currentUser.username}`;
+        if (booksEl) {
+          const count = this.serverBooks?.length || 344;
+          booksEl.textContent = `${count} cuốn EPUB máy tính sẵn sàng`;
+        }
+        if (cloudEl) {
+          cloudEl.textContent = this.cloudToken ? '🟢 Đã kích hoạt qua GitHub Gist riêng tư' : 'Chưa bật Cloud Sync';
+        }
+
+        // Build 1-click pairing QR code for Samsung S25 Ultra
+        const pairData = {
+          user: this.currentUser,
+          token: this.authToken,
+          cloudSync: {
+            token: this.cloudToken,
+            gistId: this.cloudGistId,
+          },
+          lanUrl: this.activeServerOrigin || '',
+        };
+        const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(pairData))));
+        const pairUrl = `https://nguyenvietthu671-a11y.github.io/paperink-reader/#account_pair=${encoded}`;
+        this._currentAccountPairUrl = pairUrl;
+        if (qrBox) {
+          const qrImg = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&color=0b57d0&data=${encodeURIComponent(pairUrl)}`;
+          qrBox.innerHTML = `<img src="${escHtml(qrImg)}" alt="Mã QR đăng nhập nhanh trên S25 Ultra" style="width:100%;height:100%;object-fit:contain;border-radius:10px" />`;
+        }
+      } else {
+        if (moreTitle) moreTitle.textContent = 'Tài khoản PaperInk & Đồng bộ';
+        if (moreSub) moreSub.textContent = 'Đăng nhập để đồng bộ 344 sách & ghi chú giữa Máy tính và S25 Ultra';
+        guestView?.classList.remove('hidden');
+        userView?.classList.add('hidden');
+      }
+    }
+
+    async loginUser(username, password) {
+      const u = String(username || '').trim();
+      const p = String(password || '').trim();
+      const errEl = document.getElementById('account-login-err');
+      if (errEl) errEl.classList.add('hidden');
+
+      if (!u || !p) {
+        if (errEl) {
+          errEl.textContent = 'Vui lòng nhập đầy đủ tên tài khoản và mật khẩu';
+          errEl.classList.remove('hidden');
+        }
+        return false;
+      }
+
+      try {
+        const res = await fetch(this.apiUrl('/api/auth/login'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          if (errEl) {
+            errEl.textContent = data.error || 'Đăng nhập không thành công';
+            errEl.classList.remove('hidden');
+          }
+          return false;
+        }
+
+        this.currentUser = data.user;
+        this.authToken = data.token;
+        localStorage.setItem('paperink_user', JSON.stringify(this.currentUser));
+        localStorage.setItem('paperink_auth_token', this.authToken);
+
+        if (data.cloudSync?.token && !this.cloudToken) {
+          this.cloudToken = data.cloudSync.token;
+          this.cloudGistId = data.cloudSync.gistId || '';
+          localStorage.setItem('paperink_cloud_gist_token', this.cloudToken);
+          if (this.cloudGistId) localStorage.setItem('paperink_cloud_gist_id', this.cloudGistId);
+        }
+
+        this.updateAccountUI();
+        this.toast(`Chào mừng ${this.currentUser.displayName || this.currentUser.username}! Đã đồng bộ tài khoản.`);
+        this.syncWithCloudGist(false);
+        this.refreshFromServer(false);
+        return true;
+      } catch (err) {
+        if (errEl) {
+          errEl.textContent = 'Không thể kết nối máy chủ để đăng nhập: ' + err.message;
+          errEl.classList.remove('hidden');
+        }
+        return false;
+      }
+    }
+
+    async registerUser(username, displayName, password) {
+      const u = String(username || '').trim();
+      const n = String(displayName || '').trim();
+      const p = String(password || '').trim();
+      const errEl = document.getElementById('account-reg-err');
+      if (errEl) errEl.classList.add('hidden');
+
+      if (!u || u.length < 2) {
+        if (errEl) {
+          errEl.textContent = 'Tên tài khoản phải từ 2 ký tự trở lên';
+          errEl.classList.remove('hidden');
+        }
+        return false;
+      }
+      if (!p || p.length < 4) {
+        if (errEl) {
+          errEl.textContent = 'Mật khẩu phải từ 4 ký tự trở lên';
+          errEl.classList.remove('hidden');
+        }
+        return false;
+      }
+
+      try {
+        const res = await fetch(this.apiUrl('/api/auth/register'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, displayName: n || u, password: p }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          if (errEl) {
+            errEl.textContent = data.error || 'Đăng ký không thành công';
+            errEl.classList.remove('hidden');
+          }
+          return false;
+        }
+
+        this.currentUser = data.user;
+        this.authToken = data.token;
+        localStorage.setItem('paperink_user', JSON.stringify(this.currentUser));
+        localStorage.setItem('paperink_auth_token', this.authToken);
+
+        if (data.cloudSync?.token && !this.cloudToken) {
+          this.cloudToken = data.cloudSync.token;
+          this.cloudGistId = data.cloudSync.gistId || '';
+          localStorage.setItem('paperink_cloud_gist_token', this.cloudToken);
+          if (this.cloudGistId) localStorage.setItem('paperink_cloud_gist_id', this.cloudGistId);
+        }
+
+        this.updateAccountUI();
+        this.toast(`Tài khoản ${this.currentUser.username} đã được tạo thành công!`);
+        this.syncWithCloudGist(false);
+        this.refreshFromServer(false);
+        return true;
+      } catch (err) {
+        if (errEl) {
+          errEl.textContent = 'Không thể kết nối máy chủ để đăng ký: ' + err.message;
+          errEl.classList.remove('hidden');
+        }
+        return false;
+      }
+    }
+
+    logoutUser() {
+      this.currentUser = null;
+      this.authToken = '';
+      localStorage.removeItem('paperink_user');
+      localStorage.removeItem('paperink_auth_token');
+      this.updateAccountUI();
+      this.toast('Đã đăng xuất tài khoản.');
+    }
+
     downloadTextFile(filename, text) {
       const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -5728,6 +5977,67 @@
       });
       document.getElementById('p2p-batch-download-btn')?.addEventListener('click', () => {
         this.p2p?.requestBatchDownloadAll();
+      });
+
+      // Account & Cross-Device Sync UI listeners
+      document.getElementById('header-account-btn')?.addEventListener('click', () => this.openAccountModal());
+      document.getElementById('more-account-btn')?.addEventListener('click', () => this.openAccountModal());
+      document.getElementById('account-close-btn')?.addEventListener('click', () => this.closeAccountModal());
+      document.getElementById('account-backdrop')?.addEventListener('click', () => this.closeAccountModal());
+
+      const tabLogin = document.getElementById('account-tab-login');
+      const tabReg = document.getElementById('account-tab-reg');
+      const paneLogin = document.getElementById('account-login-pane');
+      const paneReg = document.getElementById('account-reg-pane');
+
+      tabLogin?.addEventListener('click', () => {
+        tabLogin.classList.add('active');
+        tabLogin.setAttribute('aria-selected', 'true');
+        tabReg?.classList.remove('active');
+        tabReg?.setAttribute('aria-selected', 'false');
+        paneLogin?.classList.remove('hidden');
+        paneReg?.classList.add('hidden');
+      });
+
+      tabReg?.addEventListener('click', () => {
+        tabReg.classList.add('active');
+        tabReg.setAttribute('aria-selected', 'true');
+        tabLogin?.classList.remove('active');
+        tabLogin?.setAttribute('aria-selected', 'false');
+        paneReg?.classList.remove('hidden');
+        paneLogin?.classList.add('hidden');
+      });
+
+      document.getElementById('account-login-submit')?.addEventListener('click', async () => {
+        const u = document.getElementById('account-login-user')?.value;
+        const p = document.getElementById('account-login-pass')?.value;
+        await this.loginUser(u, p);
+      });
+
+      document.getElementById('account-reg-submit')?.addEventListener('click', async () => {
+        const u = document.getElementById('account-reg-user')?.value;
+        const n = document.getElementById('account-reg-name')?.value;
+        const p = document.getElementById('account-reg-pass')?.value;
+        await this.registerUser(u, n, p);
+      });
+
+      document.getElementById('account-copy-pair-btn')?.addEventListener('click', () => {
+        if (this._currentAccountPairUrl) {
+          navigator.clipboard?.writeText(this._currentAccountPairUrl).catch(() => {});
+          this.toast('Đã sao chép link đăng nhập 1-chạm!');
+        }
+      });
+
+      document.getElementById('account-sync-now-btn')?.addEventListener('click', async () => {
+        this.toast('Đang đồng bộ toàn bộ sách và tiến độ…');
+        await this.flushSyncNow(false);
+        await this.syncWithCloudGist(false);
+        this.updateAccountUI();
+        this.toast('Đã đồng bộ xong!');
+      });
+
+      document.getElementById('account-logout-btn')?.addEventListener('click', () => {
+        this.logoutUser();
       });
 
       window.addEventListener('online', () => this.refreshFromServer(true));

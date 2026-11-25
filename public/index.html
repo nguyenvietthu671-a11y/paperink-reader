@@ -79,6 +79,10 @@
           <button class="hdr-icon-btn glass-chrome" id="lib-studio-btn" type="button" title="Tùy chỉnh kệ gỗ, sticker & nền" aria-label="Tùy chỉnh kệ gỗ, sticker và nền">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
           </button>
+          <button class="hdr-icon-btn glass-chrome" id="header-account-btn" type="button" title="Tài khoản &amp; Đồng bộ thiết bị" aria-label="Tài khoản và đồng bộ thiết bị">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span id="header-account-dot" class="header-account-dot hidden"></span>
+          </button>
           <button class="hdr-icon-btn glass-chrome" id="lib-more-btn" type="button" title="Thêm tiện ích (S25 Ultra, Từ vựng, Nhập sách)" aria-label="Mở menu tiện ích">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/></svg>
           </button>
@@ -585,6 +589,10 @@
           <div style="flex:1"><strong>Chế độ Tối (Material Dark)</strong><span>Áp dụng toàn bộ kệ sách, thanh điều hướng &amp; trang đọc</span></div>
           <input id="more-dark-mode-switch" class="ios-switch" type="checkbox" />
         </label>
+        <button class="inset-action-row" id="more-account-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <div><strong id="more-account-title">Tài khoản PaperInk &amp; Đồng bộ</strong><span id="more-account-subtitle">Đăng nhập tài khoản để tự động kết nối 344 sách &amp; ghi chú giữa Máy tính và Điện thoại</span></div>
+        </button>
         <button class="inset-action-row" id="more-connect-btn" type="button">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="3"/><line x1="10.5" y1="18.25" x2="13.5" y2="18.25"/></svg>
           <div><strong>Đồng bộ PC / Cloud &amp; S25 Ultra</strong><span>Kho EPUB Online, tiến độ đọc, ghi chú S Pen &amp; mã QR</span></div>
@@ -1189,6 +1197,122 @@
             <li>Chọn <strong>Enabled</strong> và dán <code id="chrome-flag-origin">http://...</code></li>
             <li>Nhấn <strong>Relaunch</strong> → Mở lại PaperInk → <strong>⋮ → Cài đặt ứng dụng (Install app)</strong>.</li>
           </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== ACCOUNT & CROSS-DEVICE SYNC MODAL ==================== -->
+  <div id="account-backdrop" class="sheet-backdrop"></div>
+  <div id="account-modal" class="modal-panel large-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+    <div class="sheet-header">
+      <h2 id="account-modal-title">Tài khoản &amp; Đồng bộ PaperInk</h2>
+      <button class="sheet-close-circle" id="account-close-btn" type="button" aria-label="Đóng bảng tài khoản">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-content account-content">
+      <!-- VIEW 1: GUEST VIEW (Tabs: Login / Register) -->
+      <div id="account-guest-view">
+        <div class="account-tab-pills" role="tablist">
+          <button class="account-tab-btn active" id="account-tab-login" type="button" role="tab" aria-selected="true">Đăng nhập</button>
+          <button class="account-tab-btn" id="account-tab-reg" type="button" role="tab" aria-selected="false">Tạo tài khoản mới</button>
+        </div>
+
+        <!-- Form: Đăng nhập -->
+        <div id="account-login-pane" class="account-pane">
+          <div class="inset-group" style="margin-top:14px">
+            <div class="inset-row stack-item">
+              <label for="account-login-user" class="mini-label">Tên tài khoản</label>
+              <input id="account-login-user" class="apple-text-input" type="text" placeholder="Nhập tên tài khoản (ví dụ: vietthu)" autocomplete="username" />
+
+              <label for="account-login-pass" class="mini-label" style="margin-top:12px">Mật khẩu</label>
+              <input id="account-login-pass" class="apple-text-input" type="password" placeholder="Nhập mật khẩu" autocomplete="current-password" />
+
+              <div id="account-login-err" class="account-error-banner hidden" role="alert"></div>
+
+              <button class="apple-pill-btn primary" id="account-login-submit" type="button" style="margin-top:16px;width:100%">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                <span>Đăng nhập</span>
+              </button>
+            </div>
+          </div>
+          <p class="setting-hint" style="margin-top:12px">💡 <strong>Đồng bộ tự động:</strong> Đăng nhập cùng tài khoản trên Máy tính và Điện thoại Samsung S25 Ultra, toàn bộ 344 sách EPUB, tiến độ đọc từng trang, bookmark, highlight và ghi chú vẽ S Pen sẽ tự động liên kết 2 chiều.</p>
+        </div>
+
+        <!-- Form: Tạo tài khoản -->
+        <div id="account-reg-pane" class="account-pane hidden">
+          <div class="inset-group" style="margin-top:14px">
+            <div class="inset-row stack-item">
+              <label for="account-reg-user" class="mini-label">Tên tài khoản (viết liền, không dấu)</label>
+              <input id="account-reg-user" class="apple-text-input" type="text" placeholder="Ví dụ: vietthu" autocomplete="username" />
+
+              <label for="account-reg-name" class="mini-label" style="margin-top:12px">Tên hiển thị của bạn</label>
+              <input id="account-reg-name" class="apple-text-input" type="text" placeholder="Ví dụ: Nguyễn Viết Thu" />
+
+              <label for="account-reg-pass" class="mini-label" style="margin-top:12px">Mật khẩu (tối thiểu 4 ký tự)</label>
+              <input id="account-reg-pass" class="apple-text-input" type="password" placeholder="Nhập mật khẩu" autocomplete="new-password" />
+
+              <div id="account-reg-err" class="account-error-banner hidden" role="alert"></div>
+
+              <button class="apple-pill-btn primary" id="account-reg-submit" type="button" style="margin-top:16px;width:100%">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                <span>Tạo tài khoản &amp; Bắt đầu đồng bộ</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW 2: LOGGED IN (Profile + Live Sync Status + 1-Click Phone QR Login) -->
+      <div id="account-user-view" class="hidden">
+        <!-- User Profile Card -->
+        <div class="account-profile-card">
+          <div class="account-profile-avatar" id="account-user-avatar">V</div>
+          <div class="account-profile-info">
+            <h3 id="account-user-name" class="account-user-name">Người dùng</h3>
+            <span id="account-user-handle" class="account-user-handle">@vietthu</span>
+            <span class="sync-status-pill connected" id="account-badge-pill" style="margin-top:6px;align-self:flex-start">🟢 Đang đồng bộ 344 sách</span>
+          </div>
+        </div>
+
+        <!-- Sync Details Summary -->
+        <div class="inset-group" style="margin-top:14px">
+          <div class="inset-row stack-item">
+            <div class="account-metric-row">
+              <span class="account-metric-label">📚 Kho sách máy tính:</span>
+              <strong id="account-books-count">344 cuốn EPUB sẵn sàng</strong>
+            </div>
+            <div class="account-metric-row">
+              <span class="account-metric-label">☁️ Đồng bộ đám mây 24/7:</span>
+              <strong id="account-cloud-status">Kích hoạt qua GitHub Gist</strong>
+            </div>
+            <div class="account-metric-row">
+              <span class="account-metric-label">✍️ Dữ liệu cá nhân:</span>
+              <span>Tiến độ đọc, Highlight, Ghi chú S Pen, Sổ từ vựng</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1-Click QR Pairing for Phone App -->
+        <div class="qr-card" style="margin-top:16px">
+          <strong class="apk-card-title">📱 Đăng nhập siêu tốc trên Samsung S25 Ultra</strong>
+          <div id="account-qr" class="qr-box"></div>
+          <div class="qr-url-row">
+            <button class="apple-pill-btn secondary small" id="account-copy-pair-btn" type="button">Sao chép link đăng nhập 1-chạm</button>
+          </div>
+          <p class="setting-hint">Mở camera điện thoại quét mã QR này: App PaperInk trên điện thoại sẽ tự động đăng nhập cùng tài khoản của bạn, tự động kích hoạt Cloud Sync và đồng bộ toàn bộ 344 sách mà không cần nhập lại mật khẩu!</p>
+        </div>
+
+        <!-- Action Row -->
+        <div style="display:flex;gap:10px;margin-top:16px">
+          <button class="apple-pill-btn secondary" id="account-sync-now-btn" type="button" style="flex:1">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span>Đồng bộ ngay</span>
+          </button>
+          <button class="apple-pill-btn secondary" id="account-logout-btn" type="button" style="flex:0 0 auto;color:var(--md-error,#ba1a1a)">
+            <span>Đăng xuất</span>
+          </button>
         </div>
       </div>
     </div>

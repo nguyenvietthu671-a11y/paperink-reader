@@ -9,6 +9,7 @@ const { LibraryManager } = require('./lib/library');
 const { StateStore } = require('./lib/state');
 const { DictionaryService } = require('./lib/dictionary');
 const { ServerCloudSync } = require('./lib/cloud-sync');
+const { AuthManager } = require('./lib/auth');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -158,8 +159,15 @@ async function main() {
   const stateStore = new StateStore(DATA_DIR);
   const dictService = new DictionaryService(DATA_DIR);
   const cloudSync = new ServerCloudSync(DATA_DIR, stateStore);
+  const authManager = new AuthManager(DATA_DIR);
 
-  await Promise.all([library.init(), stateStore.init(), dictService.init(), cloudSync.init()]);
+  await Promise.all([
+    library.init(),
+    stateStore.init(),
+    dictService.init(),
+    cloudSync.init(),
+    authManager.init(),
+  ]);
 
   // Watch PC books folder so newly copied/downloaded EPUBs auto-sync into Online library
   let watchTimer = null;
@@ -181,7 +189,7 @@ async function main() {
       // Full CORS + Chrome Private Network Access support for cross-origin PC <-> Web/PWA sync
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename, X-File-Name');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Filename, X-File-Name');
       res.setHeader('Access-Control-Allow-Private-Network', 'true');
       if (req.method === 'OPTIONS') {
         res.writeHead(204);
@@ -189,7 +197,7 @@ async function main() {
         return;
       }
 
-      // API: Server info + LAN QR Code + Cloud Sync info
+      // API: Server info + LAN QR Code + Cloud Sync info + Auth status
       if (req.method === 'GET' && pathname === '/api/info') {
         const ips = getLanIPs();
         const lanUrls = ips.map((ip) => `http://${ip}:${PORT}`);
@@ -209,6 +217,76 @@ async function main() {
           primaryUrl,
           qrSvg,
           cloudSync: cloudSync.getInfo(),
+          userCount: authManager.users.size,
+        });
+        return;
+      }
+
+      // API: Auth Register
+      if (req.method === 'POST' && pathname === '/api/auth/register') {
+        const body = await readJsonBody(req);
+        const { username, password, displayName } = body || {};
+        const regResult = await authManager.register(username, password, displayName);
+        if (!regResult.ok) {
+          sendJson(res, 400, regResult);
+          return;
+        }
+        sendJson(res, 200, {
+          ...regResult,
+          cloudSync: cloudSync.getInfo(),
+        });
+        return;
+      }
+
+      // API: Auth Login
+      if (req.method === 'POST' && pathname === '/api/auth/login') {
+        const body = await readJsonBody(req);
+        const { username, password } = body || {};
+        const loginResult = await authManager.login(username, password);
+        if (!loginResult.ok) {
+          sendJson(res, 401, loginResult);
+          return;
+        }
+        sendJson(res, 200, {
+          ...loginResult,
+          cloudSync: cloudSync.getInfo(),
+        });
+        return;
+      }
+
+      // API: Auth Me (Verify current session token)
+      if (req.method === 'GET' && pathname === '/api/auth/me') {
+        const authHdr = req.headers['authorization'] || '';
+        const token = authHdr.startsWith('Bearer ') ? authHdr.slice(7).trim() : '';
+        const user = authManager.verifyToken(token);
+        if (!user) {
+          sendJson(res, 401, { ok: false, error: 'Chưa đăng nhập hoặc phiên làm việc đã hết hạn' });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          user: {
+            id: user.id,
+            username: user.username,
+            displayName: user.displayName,
+          },
+          cloudSync: cloudSync.getInfo(),
+        });
+        return;
+      }
+
+      // API: Auth State Sync (Sync library state tied to user)
+      if (req.method === 'POST' && pathname === '/api/auth/sync') {
+        const authHdr = req.headers['authorization'] || '';
+        const token = authHdr.startsWith('Bearer ') ? authHdr.slice(7).trim() : '';
+        const user = authManager.verifyToken(token);
+        const body = await readJsonBody(req);
+        const merged = stateStore.mergeState(body);
+        cloudSync.syncPush().catch(() => {});
+        sendJson(res, 200, {
+          ok: true,
+          user: user ? { id: user.id, username: user.username, displayName: user.displayName } : null,
+          state: merged,
         });
         return;
       }
