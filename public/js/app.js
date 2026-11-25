@@ -16,9 +16,9 @@
     turnEffect: 'curl', // curl | slide | eink | instant
     progressStyle: 'line', // line | pill | percent | hidden
     progressColorMode: 'solid', // solid | gradient
-    progressSolidColor: '#0071E3',
-    progressGradStart: '#0071E3',
-    progressGradEnd: '#AF52DE',
+    progressSolidColor: '#0B57D0',
+    progressGradStart: '#0B57D0',
+    progressGradEnd: '#6750A4',
     pageMode: 'eink',
     paperGrain: true,
     extraDim: 0,
@@ -31,20 +31,20 @@
   };
 
   const PROGRESS_SOLID_PRESETS = [
-    { name: 'Apple Blue', hex: '#0071E3' },
+    { name: 'Google Blue', hex: '#0B57D0' },
+    { name: 'M3 Violet', hex: '#6750A4' },
     { name: 'Kindle Ấm', hex: '#8C5A32' },
-    { name: 'Xanh lá dịu', hex: '#2D8A4E' },
-    { name: 'San hô', hex: '#E05263' },
-    { name: 'Tím Indigo', hex: '#6E5CE6' },
-    { name: 'Đen mực', hex: '#1D1D1F' },
+    { name: 'Xanh lá M3', hex: '#146C2E' },
+    { name: 'San hô', hex: '#B3261E' },
+    { name: 'Đen mực', hex: '#1F1F1F' },
   ];
 
   const PROGRESS_GRADIENT_PRESETS = [
-    { name: 'Ocean', start: '#0071E3', end: '#34C7F0' },
-    { name: 'Aurora', start: '#5E5CE6', end: '#D946EF' },
-    { name: 'Sunset', start: '#FF6B4A', end: '#FFB347' },
-    { name: 'Matcha', start: '#2D8A4E', end: '#7AD99E' },
-    { name: 'Rose Gold', start: '#E05263', end: '#F59E0B' },
+    { name: 'Google Sky', start: '#0B57D0', end: '#38BDF8' },
+    { name: 'Material You', start: '#6750A4', end: '#D946EF' },
+    { name: 'Sunset', start: '#E85D04', end: '#F48C06' },
+    { name: 'Botanical', start: '#146C2E', end: '#4CAF50' },
+    { name: 'Rose Gold', start: '#B3261E', end: '#F59E0B' },
     { name: 'Kindle Gold', start: '#8C5A32', end: '#D6A354' },
   ];
 
@@ -55,7 +55,7 @@
     lora: "'Lora', Georgia, serif",
     newsreader: "'Newsreader', Georgia, serif",
     atkinson: "'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, sans-serif",
-    sans: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', Roboto, sans-serif",
+    sans: "'Roboto', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif",
   };
 
   const BUILTIN_BODY_FONTS = [
@@ -63,7 +63,7 @@
     { id: 'lora', label: 'Lora' },
     { id: 'newsreader', label: 'Newsreader' },
     { id: 'atkinson', label: 'Atkinson' },
-    { id: 'sans', label: 'SF / Sans' },
+    { id: 'sans', label: 'Roboto / Sans' },
   ];
 
   const BUILTIN_HEADING_FONTS = [
@@ -73,11 +73,11 @@
     { id: 'literata', label: 'Literata' },
     { id: 'lora', label: 'Lora' },
     { id: 'newsreader', label: 'Newsreader' },
-    { id: 'sans', label: 'SF / Sans' },
+    { id: 'sans', label: 'Roboto / Sans' },
   ];
 
   const THEME_META_COLORS = {
-    apple: '#F5F5F7',
+    apple: '#F8F9FA',
     paper: '#F3F1EC',
     sepia: '#EFE5D1',
     eink: '#EAEAEA',
@@ -152,7 +152,7 @@
   }
 
   function hexLuminance(hex) {
-    const c = String(hex || '#F5F5F7').replace('#', '');
+    const c = String(hex || '#F8F9FA').replace('#', '');
     if (c.length !== 6) return 0.9;
     const rgb = [0, 2, 4]
       .map((i) => parseInt(c.slice(i, i + 2), 16) / 255)
@@ -340,7 +340,7 @@
       if (!Array.isArray(merged.placedStickers)) merged.placedStickers = [];
       if (!merged.bgMode) merged.bgMode = 'color';
       if (!merged.bgColor || !/^#[0-9a-fA-F]{6}$/.test(merged.bgColor)) {
-        merged.bgColor = '#F5F5F7';
+        merged.bgColor = '#F8F9FA';
       }
       return merged;
     }
@@ -865,7 +865,7 @@
           'content',
           this.state.shelfConfig.bgMode === 'color'
             ? this.state.shelfConfig.bgColor
-            : THEME_META_COLORS[s.theme] || '#F5F5F7'
+            : THEME_META_COLORS[s.theme] || '#F8F9FA'
         );
       }
 
@@ -897,7 +897,7 @@
         // Treat dimmed photos (>= 25% dim) as dark surface for crisp legibility
         libView.classList.toggle('wp-dark', dimPct >= 0.25);
       } else {
-        const hex = cfg.bgColor || '#F5F5F7';
+        const hex = cfg.bgColor || '#F8F9FA';
         wpEl.style.backgroundImage = 'none';
         wpEl.style.backgroundColor = hex;
         wpEl.style.filter = '';
@@ -2683,8 +2683,8 @@
 
       const colorInp = document.getElementById('custom-bg-color-input');
       const hexLbl = document.getElementById('custom-bg-hex');
-      if (colorInp) colorInp.value = cfg.bgColor || '#F5F5F7';
-      if (hexLbl) hexLbl.textContent = (cfg.bgColor || '#F5F5F7').toUpperCase();
+      if (colorInp) colorInp.value = cfg.bgColor || '#F8F9FA';
+      if (hexLbl) hexLbl.textContent = (cfg.bgColor || '#F8F9FA').toUpperCase();
 
       const ambChk = document.getElementById('set-bg-ambient');
       if (ambChk) ambChk.checked = cfg.bgAmbient !== false;

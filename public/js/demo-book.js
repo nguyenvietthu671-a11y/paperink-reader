@@ -118,7 +118,7 @@
     );
 
     const description =
-      'When the hereditary King of Bohemia seeks to recover an indiscreet photograph from the brilliant opera singer Irene Adler, Sherlock Holmes and Dr. Watson embark on an unforgettable duel of wits in Victorian London. (Bản mẫu cổ điển thuộc phạm vi công cộng để bạn trải nghiệm ngay Apple Curl, bút S Pen, tùy chỉnh phông chữ & từ điển Anh–Việt trên PaperInk.)';
+      'When the hereditary King of Bohemia seeks to recover an indiscreet photograph from the brilliant opera singer Irene Adler, Sherlock Holmes and Dr. Watson embark on an unforgettable duel of wits in Victorian London. (Bản mẫu cổ điển thuộc phạm vi công cộng để bạn trải nghiệm ngay hiệu ứng lật gập trang 3D, bút S Pen, tùy chỉnh phông chữ & từ điển Anh–Việt trên PaperInk.)';
 
     zip.file(
       'OEBPS/content.opf',

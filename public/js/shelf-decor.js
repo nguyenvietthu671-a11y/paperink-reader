@@ -150,26 +150,26 @@
     { id: 'oak', name: 'Gỗ Sồi Sáng' },
     { id: 'walnut', name: 'Gỗ Óc Chó' },
     { id: 'birch', name: 'Gỗ Bạch Dương' },
-    { id: 'slate', name: 'Kệ Đá Apple' },
+    { id: 'slate', name: 'Kệ Đá Tonal' },
     { id: 'grid', name: 'Lưới thoáng' },
     { id: 'list', name: 'Danh sách' },
   ];
 
   const BG_COLORS = [
-    { hex: '#F5F5F7', name: 'Apple Trắng' },
+    { hex: '#F8F9FA', name: 'Material Trắng' },
+    { hex: '#EDF2FA', name: 'Tonal Xanh' },
     { hex: '#F6F2EB', name: 'Kem Lanh' },
-    { hex: '#EFE7DC', name: 'Cát Ấm' },
-    { hex: '#EAEFE9', name: 'Xanh Sương' },
-    { hex: '#EAEFF5', name: 'Xanh Băng' },
+    { hex: '#EEF4EE', name: 'Xanh Lá M3' },
+    { hex: '#F5EFFB', name: 'Tím Oải Hương' },
     { hex: '#F4EAE8', name: 'Hồng Đất' },
-    { hex: '#1B1918', name: 'Thư Viện Đêm' },
+    { hex: '#141518', name: 'Material Tối' },
     { hex: '#000000', name: 'AMOLED Đen' },
   ];
 
   const DEFAULT_SHELF_CONFIG = {
     shelfStyle: 'oak',
     bgMode: 'color', // color | image
-    bgColor: '#F5F5F7',
+    bgColor: '#F8F9FA',
     bgAmbient: true,
     bgBlur: 0,
     bgDim: 0,
