@@ -91,6 +91,26 @@
     return { word, context };
   }
 
+  // Exact cubic-bezier easing solver for natural physical paper inertia
+  function solveCubicBezier(x1, y1, x2, y2, x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    const cx = 3 * x1;
+    const bx = 3 * (x2 - x1) - cx;
+    const ax = 1 - cx - bx;
+    const cy = 3 * y1;
+    const by = 3 * (y2 - y1) - cy;
+    const ay = 1 - cy - by;
+    let t = x;
+    for (let i = 0; i < 6; i++) {
+      const xt = ((ax * t + bx) * t + cx) * t - x;
+      const dxt = (3 * ax * t + 2 * bx) * t + cx;
+      if (Math.abs(dxt) < 1e-6) break;
+      t = Math.max(0, Math.min(1, t - xt / dxt));
+    }
+    return ((ay * t + by) * t + cy) * t;
+  }
+
   class PaperInkReader {
     constructor(callbacks) {
       this.cb = callbacks;
@@ -116,9 +136,12 @@
       this.flashEl = document.getElementById('eink-flash');
       this.curlEl = document.getElementById('page-curl-overlay');
       this.curlStage = document.getElementById('curl-stage');
+      this.curlUnderVeil = document.getElementById('curl-under-veil');
       this.curlTopSheet = document.getElementById('curl-top-sheet');
+      this.curlCreaseShade = document.getElementById('curl-crease-shade');
       this.curlUnderShadow = document.getElementById('curl-under-shadow');
       this.curlFlap = document.getElementById('curl-flap');
+      this.curlFlapMirror = document.getElementById('curl-flap-mirror');
       this.dogEarEl = document.getElementById('page-dog-ear');
 
       // Interactive page-turn drag & animation state
@@ -234,6 +257,11 @@
             return;
           }
 
+          const getStageYRatio = (clientY) => {
+            const rect = this.stageEl.getBoundingClientRect();
+            return Math.max(0.12, Math.min(0.88, (clientY - rect.top) / Math.max(1, rect.height)));
+          };
+
           if (gestureMode === 'undecided') {
             if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
             if (Math.abs(dx) > Math.abs(dy) * 1.15) {
@@ -241,7 +269,7 @@
               dragDir = dx < 0 ? 'next' : 'prev';
               const eff = this.getTurnEffect();
               if (eff === 'curl' || eff === 'slide') {
-                this.beginInteractiveTurn(dragDir, eff);
+                this.beginInteractiveTurn(dragDir, eff, getStageYRatio(curY));
               }
             } else {
               gestureMode = 'vertical';
@@ -263,7 +291,7 @@
             const stageW = Math.max(1, this.stageEl.getBoundingClientRect().width);
             if (eff === 'curl') {
               const rawP = dragDir === 'next' ? -dx / stageW : dx / stageW;
-              this.updateCurlProgress(Math.max(0, Math.min(1, rawP)));
+              this.updateCurlProgress(Math.max(0, Math.min(1, rawP)), getStageYRatio(curY));
             } else {
               this.updateSlideDrag(dx);
             }
@@ -293,7 +321,7 @@
             const prog = dragDir === 'next' ? -dx / stageW : dx / stageW;
             const fastFlick = dragDir === 'next' ? velocityX < -0.32 : velocityX > 0.32;
             const shouldCommit = !cancelled && (prog > 0.22 || (prog > 0.05 && fastFlick));
-            this.endInteractiveTurn(shouldCommit);
+            this.endInteractiveTurn(shouldCommit, Math.abs(velocityX));
             return;
           }
           // Non-interactive modes (eink / instant): standard swipe threshold
@@ -315,7 +343,7 @@
       this.stageEl.addEventListener('touchend', (e) => handleTouchFinish(e, false), { passive: true });
       this.stageEl.addEventListener('touchcancel', (e) => handleTouchFinish(e, true), { passive: true });
 
-      // Desktop mouse edge-drag support for Apple Curl & Smooth Slide (without breaking middle text selection!)
+      // Desktop mouse edge-drag support for 3D Curl & Smooth Slide (without breaking middle text selection!)
       let mouseDrag = null;
       let suppressNextClick = false;
       this.stageEl.addEventListener('mousedown', (e) => {
@@ -335,12 +363,15 @@
           active: false,
           dir: relX >= 0.78 ? 'next' : 'prev',
           stageW: Math.max(1, rect.width),
+          stageTop: rect.top,
+          stageH: Math.max(1, rect.height),
         };
       });
 
       window.addEventListener('mousemove', (e) => {
         if (!mouseDrag) return;
         const dx = e.clientX - mouseDrag.startX;
+        const yRatio = Math.max(0.12, Math.min(0.88, (e.clientY - mouseDrag.stageTop) / mouseDrag.stageH));
         if (!mouseDrag.active) {
           if (Math.abs(dx) < 10) return;
           const draggedRightDir = (mouseDrag.dir === 'next' && dx < 0) || (mouseDrag.dir === 'prev' && dx > 0);
@@ -351,7 +382,7 @@
           mouseDrag.active = true;
           suppressNextClick = true;
           window.getSelection()?.removeAllRanges();
-          this.beginInteractiveTurn(mouseDrag.dir, this.getTurnEffect());
+          this.beginInteractiveTurn(mouseDrag.dir, this.getTurnEffect(), yRatio);
         }
         e.preventDefault();
         const now = Date.now();
@@ -362,7 +393,7 @@
         const eff = this.getTurnEffect();
         if (eff === 'curl') {
           const p = mouseDrag.dir === 'next' ? -dx / mouseDrag.stageW : dx / mouseDrag.stageW;
-          this.updateCurlProgress(Math.max(0, Math.min(1, p)));
+          this.updateCurlProgress(Math.max(0, Math.min(1, p)), yRatio);
         } else if (eff === 'slide') {
           this.updateSlideDrag(dx);
         }
@@ -376,7 +407,7 @@
         const dx = e.clientX - md.startX;
         const prog = md.dir === 'next' ? -dx / md.stageW : dx / md.stageW;
         const fastFlick = md.dir === 'next' ? md.vx < -0.32 : md.vx > 0.32;
-        this.endInteractiveTurn(prog > 0.2 || (prog > 0.04 && fastFlick));
+        this.endInteractiveTurn(prog > 0.2 || (prog > 0.04 && fastFlick), Math.abs(md.vx));
         setTimeout(() => {
           suppressNextClick = false;
         }, 60);
@@ -638,10 +669,11 @@
       }
 
       // Kindle tap zones: left 28% prev, right 28% next, center 44% HUD
+      const relY = Math.max(0.16, Math.min(0.84, (clientY - rect.top) / Math.max(1, rect.height)));
       if (relX <= 0.28) {
-        this.prevPage();
+        this.prevPage(relY);
       } else if (relX >= 0.72) {
-        this.nextPage();
+        this.nextPage(relY);
       } else {
         this.setHudVisible(!this.hudVisible);
       }
@@ -886,8 +918,8 @@
       this.notifyPageChanged();
     }
 
-    // ==================== INTERACTIVE APPLE BOOKS 2-PAGE CURL & SMOOTH SLIDE ENGINE ====================
-    beginInteractiveTurn(dir, effect) {
+    // ==================== PHYSICAL DIRECTIONAL 3D 2-PAGE CURL & SMOOTH SLIDE ENGINE ====================
+    beginInteractiveTurn(dir, effect, yRatio = 0.72) {
       if (!this.epub || this.isScrollMode()) return;
       this.cancelTurnSessionImmediate();
 
@@ -898,6 +930,12 @@
       const blocked = !canStepInChapter && !hasNeighborChapter;
       const targetPage = canStepInChapter ? (dir === 'next' ? this.currentPage + 1 : this.currentPage - 1) : null;
 
+      const stageRect = this.stageEl.getBoundingClientRect();
+      const stageW = Math.max(1, stageRect.width);
+      const stageH = Math.max(1, stageRect.height);
+      const extraTop = Math.round(stageH * 0.18);
+      const tallH = stageH + extraTop * 2;
+
       this.turnSession = {
         dir,
         effect,
@@ -907,6 +945,11 @@
         origPage: this.currentPage,
         targetPage,
         stride,
+        stageW,
+        stageH,
+        extraTop,
+        tallH,
+        yRatio: Math.max(0.12, Math.min(0.88, yRatio)),
         progress: 0,
         animating: false,
       };
@@ -917,97 +960,233 @@
       }
 
       if (effect === 'curl' && this.curlStage && this.curlTopSheet) {
-        const stageRect = this.stageEl.getBoundingClientRect();
         const maskRect = this.maskEl.getBoundingClientRect();
         const padLeft = Math.max(0, maskRect.left - stageRect.left);
         const padTop = Math.max(0, maskRect.top - stageRect.top);
         const maskW = Math.max(1, maskRect.width);
         const maskH = Math.max(1, maskRect.height);
 
-        // Clone the rendered chapter columns once for zero-flicker 2-page reveal!
-        const clone = this.contentEl.cloneNode(true);
-        clone.removeAttribute('id');
-        clone.classList.add('no-turn-anim');
-        clone.style.setProperty('--page-w', `${this.pageW}px`);
-        clone.style.setProperty('--page-h', `${this.pageH}px`);
-        clone.style.setProperty('--page-gap', `${this.pageGap}px`);
+        const buildPageMask = (pageIdx, boundaryText = '') => {
+          const innerMask = document.createElement('div');
+          innerMask.className = 'curl-page-mask';
+          innerMask.style.left = `${padLeft}px`;
+          innerMask.style.top = `${padTop}px`;
+          innerMask.style.width = `${maskW}px`;
+          innerMask.style.height = `${maskH}px`;
 
-        const innerMask = document.createElement('div');
-        innerMask.className = 'curl-page-mask';
-        innerMask.style.left = `${padLeft}px`;
-        innerMask.style.top = `${padTop}px`;
-        innerMask.style.width = `${maskW}px`;
-        innerMask.style.height = `${maskH}px`;
+          if (pageIdx !== null) {
+            const clone = this.contentEl.cloneNode(true);
+            clone.removeAttribute('id');
+            clone.classList.add('no-turn-anim');
+            clone.style.setProperty('--page-w', `${this.pageW}px`);
+            clone.style.setProperty('--page-h', `${this.pageH}px`);
+            clone.style.setProperty('--page-gap', `${this.pageGap}px`);
+            clone.style.transform = `translate3d(${-pageIdx * stride}px, 0, 0)`;
+            innerMask.appendChild(clone);
+          } else if (boundaryText) {
+            const note = document.createElement('div');
+            note.className = 'curl-boundary-hint';
+            note.textContent = boundaryText;
+            innerMask.appendChild(note);
+          }
+          return innerMask;
+        };
+
+        this.curlStage.classList.remove('dir-next', 'dir-prev', 'chapter-boundary');
+        this.curlStage.classList.add(dir === 'next' ? 'dir-next' : 'dir-prev');
+
+        let turningPageIdx = null;
+        let boundaryLabel = '';
 
         if (dir === 'next') {
-          // Top sheet shows CURRENT page peeling away; underneath reveals NEXT page!
-          clone.style.transform = `translate3d(${-this.currentPage * stride}px, 0, 0)`;
-          innerMask.appendChild(clone);
+          // Right -> Left: Top sheet holds CURRENT page peeling away; underneath reveals NEXT page
+          turningPageIdx = this.currentPage;
           if (canStepInChapter) {
             this.contentEl.classList.add('no-turn-anim');
             this.contentEl.style.transform = `translate3d(${-targetPage * stride}px, 0, 0)`;
-            this.curlStage.classList.remove('chapter-boundary');
+            if (this.curlUnderVeil) this.curlUnderVeil.innerHTML = '';
           } else {
             this.curlStage.classList.add('chapter-boundary');
+            if (this.curlUnderVeil) {
+              this.curlUnderVeil.innerHTML = `<div class="curl-boundary-hint">${
+                hasNeighborChapter ? 'Chương tiếp theo' : 'Cuối sách'
+              }</div>`;
+            }
           }
         } else {
-          // Underneath stays on CURRENT page; top sheet peels PREVIOUS page back in from left!
+          // Left -> Right: Underneath keeps CURRENT page; top sheet unfolds PREVIOUS page from left spine
+          if (this.curlUnderVeil) this.curlUnderVeil.innerHTML = '';
           if (canStepInChapter) {
-            clone.style.transform = `translate3d(${-targetPage * stride}px, 0, 0)`;
-            innerMask.appendChild(clone);
-            this.curlStage.classList.remove('chapter-boundary');
+            turningPageIdx = targetPage;
           } else {
-            const note = document.createElement('div');
-            note.className = 'curl-boundary-hint';
-            note.textContent = hasNeighborChapter ? 'Chương trước' : 'Đầu sách';
-            innerMask.appendChild(note);
-            this.curlStage.classList.remove('chapter-boundary');
+            boundaryLabel = hasNeighborChapter ? 'Chương trước' : 'Đầu sách';
           }
         }
 
+        // Front side of turning sheet
         this.curlTopSheet.innerHTML = '';
-        this.curlTopSheet.appendChild(innerMask);
+        this.curlTopSheet.appendChild(buildPageMask(turningPageIdx, boundaryLabel));
+
+        // Oversized rotated height prevents clipped corners at diagonal tilt angles
+        const applyTallBox = (el) => {
+          if (!el) return;
+          el.style.top = `${-extraTop}px`;
+          el.style.height = `${tallH}px`;
+        };
+        applyTallBox(this.curlFlap);
+        applyTallBox(this.curlUnderShadow);
+        applyTallBox(this.curlCreaseShade);
+
+        // Mirrored ghost text on the reverse side of the 3D curled paper cylinder
+        if (this.curlFlapMirror) {
+          this.curlFlapMirror.innerHTML = '';
+          this.curlFlapMirror.style.top = `${extraTop}px`;
+          this.curlFlapMirror.style.width = `${stageW}px`;
+          this.curlFlapMirror.style.height = `${stageH}px`;
+          const mirrorInner = document.createElement('div');
+          mirrorInner.className = 'curl-flap-mirror-inner';
+          mirrorInner.appendChild(buildPageMask(turningPageIdx, boundaryLabel));
+          this.curlFlapMirror.appendChild(mirrorInner);
+        }
+
         this.curlStage.classList.remove('hidden');
-        this.updateCurlProgress(0);
+        this.updateCurlProgress(0, this.turnSession.yRatio);
       }
     }
 
-    updateCurlProgress(rawProgress) {
+    updateCurlProgress(rawProgress, nextYRatio = null) {
       const s = this.turnSession;
       if (!s || s.effect !== 'curl' || !this.curlStage) return;
 
-      // Apply soft physical resistance when at the very start/end of the book
+      if (typeof nextYRatio === 'number' && Number.isFinite(nextYRatio)) {
+        const clampedY = Math.max(0.12, Math.min(0.88, nextYRatio));
+        // Smooth vertical tilt response when dragging up/down
+        s.yRatio = s.yRatio * 0.78 + clampedY * 0.22;
+      }
+
+      // Soft physical resistance at the very start/end of the book
       const p = s.blocked
         ? Math.min(0.14, rawProgress * 0.28)
         : Math.max(0, Math.min(1, rawProgress));
       s.progress = p;
 
-      const W = Math.max(1, this.stageEl.getBoundingClientRect().width);
-      // dir === 'next': fold moves right (W) -> left (0)
-      // dir === 'prev': fold moves left (0) -> right (W)
-      const foldX = s.dir === 'next' ? W * (1 - p) : W * p;
+      const W = s.stageW;
+      const H = s.stageH;
 
-      // Clip top sheet smoothly at exact fold line
-      const clipRight = Math.max(0, W - foldX);
-      this.curlTopSheet.style.clipPath = `inset(0 ${clipRight.toFixed(1)}px 0 0)`;
-
-      // Curved cylindrical paper backside flap immediately to the left of foldX
-      const env = Math.sin(p * Math.PI);
-      const maxEdgeRoom = s.dir === 'next' ? Math.max(0, W - foldX) : Math.max(0, foldX);
-      const flapW = Math.min(W * 0.36 * env, maxEdgeRoom + 18 * env, foldX + 4);
-      const safeFlapW = Math.max(0, flapW);
-
-      if (this.curlFlap) {
-        this.curlFlap.style.width = `${safeFlapW.toFixed(1)}px`;
-        this.curlFlap.style.transform = `translate3d(${(foldX - safeFlapW).toFixed(1)}px, 0, 0)`;
-        this.curlFlap.style.opacity = safeFlapW > 1 ? '1' : '0';
+      // Directional conical diagonal fold angle driven by vertical touch height & turn direction:
+      // Right -> Left (next): lower thumb leans '/' (+deg), upper thumb leans '\' (-deg)
+      // Left -> Right (prev): lower thumb leans '\' (-deg), upper thumb leans '/' (+deg)
+      const maxSkew = Math.min(54, Math.max(24, W * 0.115));
+      let skew;
+      if (s.yRatio >= 0.48) {
+        const mag = 0.55 + Math.min(1, (s.yRatio - 0.48) / 0.36) * 0.45;
+        skew = s.dir === 'next' ? maxSkew * mag : -maxSkew * mag;
+      } else {
+        const mag = 0.45 + Math.min(1, (0.48 - s.yRatio) / 0.36) * 0.55;
+        skew = s.dir === 'next' ? -maxSkew * mag : maxSkew * mag;
       }
+      const absSkew = Math.abs(skew);
+      const deg = (Math.atan2(2 * skew, H) * 180) / Math.PI;
 
-      if (this.curlUnderShadow) {
-        const shadowW = Math.max(0, 14 + env * 74);
-        this.curlUnderShadow.style.width = `${shadowW.toFixed(1)}px`;
-        this.curlUnderShadow.style.transform = `translate3d(${foldX.toFixed(1)}px, 0, 0)`;
-        this.curlUnderShadow.style.opacity = String((env * 0.88).toFixed(3));
+      // Center X of the diagonal fold line at y = H / 2
+      const cx =
+        s.dir === 'next'
+          ? (W + absSkew) * (1 - p) - absSkew * p
+          : -absSkew * (1 - p) + (W + absSkew) * p;
+
+      // Exact convex trapezoid clip for top flat page (zero self-intersection at all angles)
+      const topX = cx + skew;
+      const botX = cx - skew;
+      this.curlTopSheet.style.clipPath = `polygon(-240px 0px, ${topX.toFixed(1)}px 0px, ${botX.toFixed(
+        1
+      )}px ${H.toFixed(1)}px, -240px ${H.toFixed(1)}px)`;
+
+      // Physical 3D paper cylinder width & directional geometry
+      const sinEnv = Math.sin(p * Math.PI);
+      const arch = Math.pow(Math.sin(Math.min(1, p * 0.92 + 0.04) * Math.PI), 0.72);
+      const baseFlap = Math.min(235, W * 0.37);
+
+      if (s.dir === 'next') {
+        // ---- RIGHT -> LEFT: Peeling right corner over toward the left spine ----
+        const peeledDist = Math.max(0, W + absSkew - cx);
+        const flapW = Math.max(0, Math.min(baseFlap * (0.28 + 0.72 * arch), peeledDist * 0.92));
+        const fadeOut = p > 0.93 ? Math.max(0, (1 - p) / 0.07) : 1;
+
+        if (this.curlFlap) {
+          this.curlFlap.style.width = `${flapW.toFixed(1)}px`;
+          this.curlFlap.style.transform = `translate3d(${(cx - flapW).toFixed(1)}px, 0, 0) rotate(${deg.toFixed(
+            2
+          )}deg)`;
+          this.curlFlap.style.opacity = flapW > 1 ? fadeOut.toFixed(3) : '0';
+        }
+        if (this.curlFlapMirror) {
+          // Aligns mirrored bleed-through words 1:1 across the right fold crease
+          const mirrorShiftX = flapW + cx - W;
+          this.curlFlapMirror.style.transform = `translate3d(${mirrorShiftX.toFixed(1)}px, 0, 0)`;
+        }
+        if (this.curlCreaseShade) {
+          // Overhanging shadow cast to the LEFT onto the flat current page
+          const creaseW = flapW + 46;
+          this.curlCreaseShade.style.width = `${creaseW.toFixed(1)}px`;
+          this.curlCreaseShade.style.transform = `translate3d(${(cx - creaseW).toFixed(
+            1
+          )}px, 0, 0) rotate(${deg.toFixed(2)}deg)`;
+          this.curlCreaseShade.style.opacity = (sinEnv * 0.92).toFixed(3);
+        }
+        if (this.curlUnderShadow) {
+          // Deep penumbra cast to the RIGHT onto the newly exposed next page
+          const shadowW = 24 + arch * 94;
+          this.curlUnderShadow.style.width = `${shadowW.toFixed(1)}px`;
+          this.curlUnderShadow.style.transform = `translate3d(${(cx - 1).toFixed(1)}px, 0, 0) rotate(${deg.toFixed(
+            2
+          )}deg)`;
+          this.curlUnderShadow.style.opacity = (sinEnv * 0.96).toFixed(3);
+        }
+        if (this.curlUnderVeil && !s.blocked && s.canStepInChapter) {
+          this.curlUnderVeil.style.opacity = ((1 - p) * 0.85).toFixed(3);
+        }
+      } else {
+        // ---- LEFT -> RIGHT: Unfolding previous page back across from the left spine ----
+        const remainDist = Math.max(0, W + absSkew - cx);
+        const enteredDist = Math.max(0, cx + absSkew);
+        const flapW = Math.max(
+          0,
+          Math.min(baseFlap * (0.28 + 0.72 * arch), remainDist * 0.92, Math.max(24, enteredDist * 1.15 + 18))
+        );
+        const fadeIn = p < 0.05 ? Math.max(0, p / 0.05) : 1;
+
+        if (this.curlFlap) {
+          // Flap sits on the RIGHT of foldX — arched underside rolling left-to-right!
+          this.curlFlap.style.width = `${flapW.toFixed(1)}px`;
+          this.curlFlap.style.transform = `translate3d(${cx.toFixed(1)}px, 0, 0) rotate(${deg.toFixed(2)}deg)`;
+          this.curlFlap.style.opacity = flapW > 1 ? fadeIn.toFixed(3) : '0';
+        }
+        if (this.curlFlapMirror) {
+          // Aligns mirrored bleed-through words across the left fold crease as the sheet unrolls right
+          const mirrorShiftX = cx - W;
+          this.curlFlapMirror.style.transform = `translate3d(${mirrorShiftX.toFixed(1)}px, 0, 0)`;
+        }
+        if (this.curlCreaseShade) {
+          // Subtle concave unfold valley just to the left of the crease on the incoming page
+          const creaseW = 22 + arch * 36;
+          this.curlCreaseShade.style.width = `${creaseW.toFixed(1)}px`;
+          this.curlCreaseShade.style.transform = `translate3d(${(cx - creaseW + 1).toFixed(
+            1
+          )}px, 0, 0) rotate(${deg.toFixed(2)}deg)`;
+          this.curlCreaseShade.style.opacity = (sinEnv * 0.74).toFixed(3);
+        }
+        if (this.curlUnderShadow) {
+          // Long directional shadow cast AHEAD to the RIGHT of the rolling cylinder onto current page
+          const shadowW = 26 + arch * 98;
+          this.curlUnderShadow.style.width = `${shadowW.toFixed(1)}px`;
+          this.curlUnderShadow.style.transform = `translate3d(${cx.toFixed(1)}px, 0, 0) rotate(${deg.toFixed(
+            2
+          )}deg) translate3d(${Math.max(0, flapW - 3).toFixed(1)}px, 0, 0)`;
+          this.curlUnderShadow.style.opacity = (sinEnv * 0.92 * fadeIn).toFixed(3);
+        }
+        if (this.curlUnderVeil) {
+          this.curlUnderVeil.style.opacity = (p * 0.65).toFixed(3);
+        }
       }
     }
 
@@ -1017,11 +1196,10 @@
       const base = -s.origPage * s.stride;
       const dampedDx = s.canStepInChapter ? dx : dx * 0.32;
       this.contentEl.style.transform = `translate3d(${(base + dampedDx).toFixed(1)}px, 0, 0)`;
-      const W = Math.max(1, this.stageEl.getBoundingClientRect().width);
-      s.progress = Math.max(0, Math.min(1, (s.dir === 'next' ? -dx : dx) / W));
+      s.progress = Math.max(0, Math.min(1, (s.dir === 'next' ? -dx : dx) / s.stageW));
     }
 
-    endInteractiveTurn(shouldCommit) {
+    endInteractiveTurn(shouldCommit, absVelocity = 0) {
       const s = this.turnSession;
       if (!s) return;
 
@@ -1058,12 +1236,14 @@
         const fromP = s.progress;
         const toP = commit ? 1 : 0;
         const dist = Math.abs(toP - fromP);
-        const duration = Math.max(180, Math.min(480, Math.round(dist * 480)));
-        this.animateCurlTween(fromP, toP, duration, commit);
+        // Unhurried, tactile paper completion: slightly quicker on flicks, never jerky
+        const velFactor = 1 + Math.min(0.28, Math.max(0, (absVelocity - 0.35) * 0.3));
+        const duration = Math.max(320, Math.min(720, Math.round((dist * 720) / velFactor)));
+        this.animateCurlTween(fromP, toP, duration, commit, 'release');
       }
     }
 
-    animateCurlTween(fromP, toP, duration, commit) {
+    animateCurlTween(fromP, toP, duration, commit, curve = 'auto') {
       const s = this.turnSession;
       if (!s) return;
       s.animating = true;
@@ -1073,8 +1253,12 @@
       const step = (now) => {
         if (!this.turnSession) return;
         const t = Math.min(1, (now - startTime) / Math.max(1, duration));
-        // Silky cubic ease-out like Apple Books iOS spring deceleration
-        const eased = 1 - Math.pow(1 - t, 3);
+        // 'auto' tap turn uses an organic lift-glide-settle paper S-curve;
+        // 'release' drag turn uses smooth velocity-matched quartic deceleration
+        const eased =
+          curve === 'auto'
+            ? solveCubicBezier(0.32, 0.05, 0.2, 1.0, t)
+            : 1 - Math.pow(1 - t, 3.2);
         const curP = fromP + (toP - fromP) * eased;
         this.updateCurlProgress(curP);
 
@@ -1122,18 +1306,34 @@
     cleanupCurlDOM() {
       if (this.curlStage) {
         this.curlStage.classList.add('hidden');
-        this.curlStage.classList.remove('chapter-boundary');
+        this.curlStage.classList.remove('chapter-boundary', 'dir-next', 'dir-prev');
       }
       if (this.curlTopSheet) {
         this.curlTopSheet.innerHTML = '';
         this.curlTopSheet.style.clipPath = '';
       }
+      if (this.curlFlapMirror) {
+        this.curlFlapMirror.innerHTML = '';
+        this.curlFlapMirror.style.transform = '';
+      }
       if (this.curlFlap) {
         this.curlFlap.style.width = '0px';
         this.curlFlap.style.opacity = '0';
+        this.curlFlap.style.transform = '';
+      }
+      if (this.curlCreaseShade) {
+        this.curlCreaseShade.style.width = '0px';
+        this.curlCreaseShade.style.opacity = '0';
+        this.curlCreaseShade.style.transform = '';
       }
       if (this.curlUnderShadow) {
+        this.curlUnderShadow.style.width = '0px';
         this.curlUnderShadow.style.opacity = '0';
+        this.curlUnderShadow.style.transform = '';
+      }
+      if (this.curlUnderVeil) {
+        this.curlUnderVeil.innerHTML = '';
+        this.curlUnderVeil.style.opacity = '0';
       }
     }
 
@@ -1163,16 +1363,17 @@
       }
     }
 
-    animateAutoCurl(dir) {
+    animateAutoCurl(dir, yRatio = 0.72) {
       if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
         return false;
       }
-      this.beginInteractiveTurn(dir, 'curl');
+      this.beginInteractiveTurn(dir, 'curl', yRatio);
       if (!this.turnSession || this.turnSession.blocked) {
         this.cancelTurnSessionImmediate();
         return false;
       }
-      this.animateCurlTween(0, 1, 490, true);
+      // Graceful, realistic 780ms physical paper turn with organic lift & settle
+      this.animateCurlTween(0, 1, 780, true, 'auto');
       return true;
     }
 
@@ -1188,17 +1389,17 @@
       this.persistProgress();
     }
 
-    nextPage() {
+    nextPage(yRatio = 0.72) {
       if (!this.epub || this.isScrollMode()) return;
       if (this.turnSession?.animating) this.forceCompleteTurnSession();
       const eff = this.getTurnEffect();
 
       if (this.currentPage < this.totalPages - 1) {
-        if (eff === 'curl' && this.animateAutoCurl('next')) return;
+        if (eff === 'curl' && this.animateAutoCurl('next', yRatio)) return;
         this.goToPage(this.currentPage + 1, true, 'next');
         this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
       } else if (this.chapterIndex < this.epub.spine.length - 1) {
-        if (eff === 'curl' && this.animateAutoCurl('next')) return;
+        if (eff === 'curl' && this.animateAutoCurl('next', yRatio)) return;
         this.goToChapter(this.chapterIndex + 1, 0, '', 'next');
         this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
       } else {
@@ -1206,17 +1407,17 @@
       }
     }
 
-    prevPage() {
+    prevPage(yRatio = 0.72) {
       if (!this.epub || this.isScrollMode()) return;
       if (this.turnSession?.animating) this.forceCompleteTurnSession();
       const eff = this.getTurnEffect();
 
       if (this.currentPage > 0) {
-        if (eff === 'curl' && this.animateAutoCurl('prev')) return;
+        if (eff === 'curl' && this.animateAutoCurl('prev', yRatio)) return;
         this.goToPage(this.currentPage - 1, true, 'prev');
         this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
       } else if (this.chapterIndex > 0) {
-        if (eff === 'curl' && this.animateAutoCurl('prev')) return;
+        if (eff === 'curl' && this.animateAutoCurl('prev', yRatio)) return;
         this.goToChapter(this.chapterIndex - 1, 'last', '', 'prev');
         this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
       } else {
