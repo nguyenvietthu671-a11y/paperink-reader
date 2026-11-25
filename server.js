@@ -8,6 +8,7 @@ const QRCode = require('qrcode');
 const { LibraryManager } = require('./lib/library');
 const { StateStore } = require('./lib/state');
 const { DictionaryService } = require('./lib/dictionary');
+const { ServerCloudSync } = require('./lib/cloud-sync');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -156,8 +157,9 @@ async function main() {
   const library = new LibraryManager(BOOKS_DIR, DATA_DIR);
   const stateStore = new StateStore(DATA_DIR);
   const dictService = new DictionaryService(DATA_DIR);
+  const cloudSync = new ServerCloudSync(DATA_DIR, stateStore);
 
-  await Promise.all([library.init(), stateStore.init(), dictService.init()]);
+  await Promise.all([library.init(), stateStore.init(), dictService.init(), cloudSync.init()]);
 
   // Watch PC books folder so newly copied/downloaded EPUBs auto-sync into Online library
   let watchTimer = null;
@@ -187,7 +189,7 @@ async function main() {
         return;
       }
 
-      // API: Server info + LAN QR Code
+      // API: Server info + LAN QR Code + Cloud Sync info
       if (req.method === 'GET' && pathname === '/api/info') {
         const ips = getLanIPs();
         const lanUrls = ips.map((ip) => `http://${ip}:${PORT}`);
@@ -206,6 +208,7 @@ async function main() {
           lanUrls,
           primaryUrl,
           qrSvg,
+          cloudSync: cloudSync.getInfo(),
         });
         return;
       }
@@ -334,7 +337,16 @@ async function main() {
       if (req.method === 'POST' && pathname === '/api/state/sync') {
         const body = await readJsonBody(req);
         const merged = stateStore.mergeState(body);
+        cloudSync.syncPush().catch(() => {});
         sendJson(res, 200, merged);
+        return;
+      }
+
+      // API: Trigger cloud sync pull/push
+      if (req.method === 'POST' && pathname === '/api/cloud/sync') {
+        await cloudSync.syncPull();
+        await cloudSync.syncPush();
+        sendJson(res, 200, { ok: true, info: cloudSync.getInfo() });
         return;
       }
 

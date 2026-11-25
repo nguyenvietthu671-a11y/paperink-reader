@@ -295,6 +295,7 @@
     }
 
     async init() {
+      this.checkUrlHashPairing();
       this.registerServiceWorker();
       this.bindUI();
 
@@ -304,6 +305,33 @@
       this.renderCurrentRoute();
 
       await this.refreshFromServer();
+    }
+
+    checkUrlHashPairing() {
+      try {
+        const hash = window.location.hash || '';
+        if (hash.includes('cloud_token=')) {
+          const raw = hash.replace(/^#+/, '');
+          const params = new URLSearchParams(raw);
+          const token = params.get('cloud_token');
+          const gistId = params.get('gist_id');
+          if (token && (token.startsWith('gho_') || token.startsWith('ghp_'))) {
+            this.cloudToken = token;
+            localStorage.setItem('paperink_cloud_gist_token', token);
+            if (gistId) {
+              this.cloudGistId = gistId;
+              localStorage.setItem('paperink_cloud_gist_id', gistId);
+            }
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+            setTimeout(() => {
+              this.toast('Đã kết nối Cloud Sync 24/7! Đang đồng bộ tiến độ & ghi chú…');
+              this.syncWithCloudGist(false);
+            }, 500);
+          }
+        }
+      } catch (_) {}
     }
 
     registerServiceWorker() {
@@ -896,14 +924,27 @@
       if (candidateOrigin !== null) {
         this.activeServerOrigin = candidateOrigin;
         try {
-          const [libRes, syncRes] = await Promise.all([
+          const [libRes, syncRes, infoRes] = await Promise.all([
             fetch(this.apiUrl('/api/library'), { cache: 'no-store' }),
             fetch(this.apiUrl('/api/state/sync'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(this.state),
             }),
+            fetch(this.apiUrl('/api/info'), { cache: 'no-store' }).catch(() => null),
           ]);
+
+          if (infoRes && infoRes.ok) {
+            try {
+              const infoData = await infoRes.json();
+              if (infoData.cloudSync?.enabled && infoData.cloudSync.token && !this.cloudToken) {
+                this.cloudToken = infoData.cloudSync.token;
+                this.cloudGistId = infoData.cloudSync.gistId || '';
+                localStorage.setItem('paperink_cloud_gist_token', this.cloudToken);
+                if (this.cloudGistId) localStorage.setItem('paperink_cloud_gist_id', this.cloudGistId);
+              }
+            } catch (_) {}
+          }
 
           if (libRes.ok) {
             const libData = await libRes.json();
@@ -4547,6 +4588,20 @@
           qrBox.innerHTML = `<img src="${escHtml(qrImgUrl)}" alt="Mã QR mở PaperInk trên điện thoại" style="width:100%;height:100%;object-fit:contain;border-radius:8px" />`;
         }
       }
+
+      const cloudQrWrap = document.getElementById('cloud-sync-qr-box-wrap');
+      const cloudQrBox = document.getElementById('cloud-sync-qr');
+      if (this.cloudToken) {
+        cloudQrWrap?.classList.remove('hidden');
+        const cloudPairUrl = `https://nguyenvietthu671-a11y.github.io/paperink-reader/#cloud_token=${encodeURIComponent(this.cloudToken)}${this.cloudGistId ? `&gist_id=${encodeURIComponent(this.cloudGistId)}` : ''}`;
+        this._currentCloudPairUrl = cloudPairUrl;
+        if (cloudQrBox) {
+          const qrImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&color=0b57d0&data=${encodeURIComponent(cloudPairUrl)}`;
+          cloudQrBox.innerHTML = `<img src="${escHtml(qrImgUrl)}" alt="Mã QR kích hoạt Cloud Sync cho điện thoại" style="width:100%;height:100%;object-fit:contain;border-radius:8px" />`;
+        }
+      } else {
+        cloudQrWrap?.classList.add('hidden');
+      }
     }
 
     downloadTextFile(filename, text) {
@@ -5574,6 +5629,13 @@
         const txt = document.getElementById('connect-url-text')?.textContent || '';
         navigator.clipboard?.writeText(txt).catch(() => {});
         this.toast('Đã sao chép địa chỉ kết nối');
+      });
+      document.getElementById('copy-cloud-sync-url-btn')?.addEventListener('click', () => {
+        const url = this._currentCloudPairUrl;
+        if (url) {
+          navigator.clipboard?.writeText(url).catch(() => {});
+          this.toast('Đã sao chép link Cloud Sync 1-chạm!');
+        }
       });
       document.getElementById('pwa-install-btn')?.addEventListener('click', async () => {
         if (!this.deferredInstallPrompt) return;
