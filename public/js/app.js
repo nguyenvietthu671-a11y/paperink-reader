@@ -187,7 +187,9 @@
       this.isOnlineToServer = false;
       this.deferredInstallPrompt = null;
       this.activeBookInfoId = null;
+      this.activeSeriesInfoName = null;
       this.enrichingBookIds = new Set();
+      this.enrichingSeriesKeys = new Set();
       this.knownServerBookIds = null;
 
       this.state = {
@@ -196,6 +198,7 @@
         highlights: {},
         bookReviews: {},
         bookMetaOverrides: {},
+        seriesMeta: {},
         inkNotes: {},
         folders: [],
         hiddenBookIds: {},
@@ -376,6 +379,7 @@
             highlights: savedState.highlights || {},
             bookReviews: savedState.bookReviews || {},
             bookMetaOverrides: savedState.bookMetaOverrides || {},
+            seriesMeta: savedState.seriesMeta || {},
             inkNotes: savedState.inkNotes || {},
             folders: Array.isArray(savedState.folders) ? savedState.folders : [],
             hiddenBookIds: savedState.hiddenBookIds || {},
@@ -633,6 +637,17 @@
           const cur = this.state.bookMetaOverrides[bookId];
           if (!cur || (meta.updatedAt || 0) >= (cur.updatedAt || 0)) {
             this.state.bookMetaOverrides[bookId] = meta;
+          }
+        }
+      }
+
+      if (incoming.seriesMeta && typeof incoming.seriesMeta === 'object') {
+        if (!this.state.seriesMeta) this.state.seriesMeta = {};
+        for (const [sKey, sm] of Object.entries(incoming.seriesMeta)) {
+          if (!sm || typeof sm !== 'object') continue;
+          const cur = this.state.seriesMeta[sKey];
+          if (!cur || (sm.updatedAt || 0) >= (cur.updatedAt || 0)) {
+            this.state.seriesMeta[sKey] = sm;
           }
         }
       }
@@ -2141,7 +2156,15 @@
           if (folder) this.drilldown.label = folder.name;
         }
         if (titleEl) titleEl.textContent = this.drilldown.label;
-        if (subEl) subEl.textContent = `${scoped.length} cuốn`;
+        if (subEl) {
+          if (this.drilldown.type === 'series') {
+            const prof = this.getSeriesProfile(this.drilldown.value, scoped);
+            const gText = prof.genres?.slice(0, 2).join(' · ');
+            subEl.innerHTML = `${scoped.length} cuốn${gText ? ` · ${escHtml(gText)}` : ''} · <button class="inline-series-info-link" data-open-series-info="${escHtml(this.drilldown.value)}" type="button">Thông tin bộ</button>`;
+          } else {
+            subEl.textContent = `${scoped.length} cuốn`;
+          }
+        }
       } else {
         if (titleEl) titleEl.textContent = 'Kệ sách';
         const onlineCnt = all.filter((b) => b.isOnline).length;
@@ -2892,13 +2915,19 @@
         const readCount = books.filter((b) => (b.progress?.bookPercent || 0) >= 95).length;
         const activeCount = books.filter((b) => (b.progress?.bookPercent || 0) > 0).length;
         const primaryAuthor = books[0]?.author || '';
-        return { name, books, count: books.length, readCount, activeCount, primaryAuthor };
+        const profile = type === 'series' ? this.getSeriesProfile(name, books) : null;
+        return { name, books, count: books.length, readCount, activeCount, primaryAuthor, profile };
       });
 
       if (this.searchQuery) {
         const q = this.searchQuery.toLowerCase();
+        const qTag = q.replace(/^#/, '');
         list = list.filter(
-          (g) => g.name.toLowerCase().includes(q) || g.primaryAuthor.toLowerCase().includes(q)
+          (g) =>
+            g.name.toLowerCase().includes(q) ||
+            g.primaryAuthor.toLowerCase().includes(q) ||
+            (g.profile?.genres || []).some((gn) => gn.toLowerCase().includes(qTag)) ||
+            (g.profile?.tags || []).some((tg) => tg.toLowerCase().includes(qTag))
         );
       }
 
@@ -2932,9 +2961,16 @@
             .join('');
 
           const pct = g.count > 0 ? Math.round((g.readCount / g.count) * 100) : 0;
+          const seriesGenres = type === 'series' ? (g.profile?.genres || []).slice(0, 2) : [];
+          const seriesGenresHtml = seriesGenres.length
+            ? `<div class="col-series-genres">${seriesGenres
+                .map((gn) => `<span class="col-genre-mini">${escHtml(gn)}</span>`)
+                .join('')}</div>`
+            : '';
           const progressMarkup =
             type === 'series'
               ? `
+                ${seriesGenresHtml}
                 <div class="col-series-prog">
                   <div class="mini-bar"><div class="mini-bar-fill" style="width:${pct}%"></div></div>
                   <span class="tabular">${g.readCount}/${g.count}</span>
@@ -2947,7 +2983,7 @@
                 }</div>`;
 
           return `
-            <article class="collection-card glass-card"
+            <article class="collection-card glass-card ${type === 'series' ? 'series-collection-card' : ''}"
                      data-open-collection-type="${type}"
                      data-open-collection-val="${escHtml(g.name)}"
                      tabindex="0"
@@ -2956,7 +2992,14 @@
               <div class="collection-meta">
                 <div class="collection-top">
                   <h3 class="collection-name">${escHtml(g.name)}</h3>
-                  <span class="collection-count tabular">${g.count}</span>
+                  <div class="collection-top-right">
+                    <span class="collection-count tabular">${g.count}</span>
+                    ${
+                      type === 'series'
+                        ? `<button class="series-more-btn" data-open-series-info="${escHtml(g.name)}" type="button" title="Thể loại & mô tả bộ truyện" aria-label="Xem thể loại và mô tả bộ truyện ${escHtml(g.name)}">${ICONS.moreVert}</button>`
+                        : ''
+                    }
+                  </div>
                 </div>
                 ${type === 'series' && g.primaryAuthor ? `<div class="collection-author">${escHtml(g.primaryAuthor)}</div>` : ''}
                 ${progressMarkup}
@@ -3878,10 +3921,306 @@
       }
     }
 
+    getBooksForSeries(seriesName) {
+      const targetKey = this.canonicalSeriesKey(seriesName);
+      if (!targetKey) return [];
+      const all = this.getMergedBooks();
+      return all
+        .filter((b) => b.series && this.canonicalSeriesKey(b.series) === targetKey)
+        .sort((a, b) => (a.seriesIndex ?? 9999) - (b.seriesIndex ?? 9999));
+    }
+
+    getSeriesProfile(seriesName, booksArg = null) {
+      const books = Array.isArray(booksArg) ? booksArg : this.getBooksForSeries(seriesName);
+      const key = this.canonicalSeriesKey(seriesName);
+      const saved = this.state.seriesMeta?.[key];
+      const metaMod = window.PaperInkMetadata;
+      const base =
+        metaMod && typeof metaMod.synthesizeSeriesOverview === 'function'
+          ? metaMod.synthesizeSeriesOverview(seriesName, books)
+          : {
+              series: seriesName,
+              author: books[0]?.author || 'Unknown Author',
+              genres: books[0]?.genres || ['General Fiction'],
+              tags: ['Theo bộ'],
+              description: `${seriesName} (${books.length} cuốn).`,
+            };
+
+      if (saved && typeof saved === 'object') {
+        return {
+          ...base,
+          genres: Array.isArray(saved.genres) && saved.genres.length ? saved.genres : base.genres,
+          tags: Array.isArray(saved.tags) && saved.tags.length ? saved.tags : base.tags,
+          description:
+            typeof saved.description === 'string' && saved.description.trim()
+              ? saved.description.trim()
+              : base.description,
+          enrichedOnline: Boolean(saved.enrichedOnline),
+          manual: Boolean(saved.manual),
+          updatedAt: saved.updatedAt || 0,
+        };
+      }
+      return base;
+    }
+
+    openSeriesInfoModal(seriesName) {
+      if (!seriesName) return;
+      this.activeBookInfoId = null;
+      this.activeSeriesInfoName = seriesName;
+      this.closeAllSheets();
+      const titleEl = document.getElementById('book-info-title');
+      if (titleEl) titleEl.textContent = 'Thông tin Bộ truyện';
+      this.renderSeriesInfoModal(seriesName);
+      document.getElementById('book-info-backdrop')?.classList.add('open');
+      document.getElementById('book-info-modal')?.classList.add('open');
+
+      // Auto-enrich shared series description & genres online on first view if not yet saved
+      const key = this.canonicalSeriesKey(seriesName);
+      if (key && !this.state.seriesMeta?.[key] && !this.enrichingSeriesKeys.has(key)) {
+        this.autoEnrichSeries(seriesName, { silent: true });
+      }
+    }
+
+    renderSeriesInfoModal(seriesName) {
+      const body = document.getElementById('book-info-body');
+      if (!body) return;
+      const books = this.getBooksForSeries(seriesName);
+      if (!books.length) return;
+
+      const key = this.canonicalSeriesKey(seriesName);
+      const profile = this.getSeriesProfile(seriesName, books);
+      const genres = (profile.genres || []).slice(0, 6);
+      const tags = (profile.tags || []).slice(0, 8);
+      const readCount = books.filter((b) => (b.progress?.bookPercent || 0) >= 95).length;
+      const pct = Math.round((readCount / books.length) * 100);
+      const isEnriching = this.enrichingSeriesKeys.has(key);
+
+      // Next unread or in-progress book in series
+      const nextBook =
+        books.find((b) => {
+          const p = b.progress?.bookPercent || 0;
+          return p > 0 && p < 95;
+        }) ||
+        books.find((b) => (b.progress?.bookPercent || 0) < 95) ||
+        books[0];
+
+      const fanCovers = books.slice(0, 3);
+      const fanHtml = fanCovers
+        .map(
+          (b, idx) =>
+            `<div class="fan-cover fan-${idx}">${this.renderCoverMarkup(b)}${
+              b.seriesIndex != null ? `<span class="fan-series-badge tabular">#${b.seriesIndex}</span>` : ''
+            }</div>`
+        )
+        .join('');
+
+      body.innerHTML = `
+        <div class="book-info-hero series-info-hero">
+          <div class="collection-fan series-modal-fan">${fanHtml}</div>
+          <div class="book-info-meta">
+            <h3 class="book-info-name">${escHtml(seriesName)}</h3>
+            <button class="book-info-author book-info-link" data-filter-author="${escHtml(profile.author)}" type="button" title="Xem tất cả sách của tác giả này">${escHtml(profile.author)}</button>
+            <div class="book-info-status-row">
+              <span class="pct-pill tabular">${books.length} cuốn · Đã đọc ${readCount}/${books.length}</span>
+            </div>
+            ${
+              genres.length
+                ? `<div class="book-info-genres">${genres
+                    .map(
+                      (g) =>
+                        `<button class="genre-chip genre-chip-btn" data-filter-genre="${escHtml(g)}" type="button" title="Xem thể loại ${escHtml(g)}">${escHtml(g)}</button>`
+                    )
+                    .join('')}</div>`
+                : ''
+            }
+            ${
+              tags.length
+                ? `<div class="book-info-tags">${tags
+                    .map(
+                      (t) =>
+                        `<button class="tag-chip" data-filter-tag="${escHtml(t)}" type="button" title="Tìm sách gắn tag #${escHtml(t)}">#${escHtml(t)}</button>`
+                    )
+                    .join('')}</div>`
+                : ''
+            }
+          </div>
+        </div>
+
+        ${
+          pct > 0
+            ? `<div class="book-info-prog-bar"><div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div></div>`
+            : ''
+        }
+
+        <div class="book-meta-actions">
+          <button class="apple-pill-btn secondary small" data-auto-enrich-series="${escHtml(seriesName)}" type="button" ${isEnriching ? 'disabled' : ''}>
+            ${isEnriching ? ICONS.spinner : ICONS.sparkles}
+            <span>${isEnriching ? 'Đang tạo mô tả & nhãn…' : 'Tự động gắn thể loại & mô tả'}</span>
+          </button>
+          <button class="apple-pill-btn secondary small" id="toggle-series-edit-btn" type="button">
+            ${ICONS.tag}
+            <span>Chỉnh sửa bộ truyện</span>
+          </button>
+        </div>
+
+        <div id="series-meta-edit-panel" class="meta-edit-panel hidden">
+          <div class="inset-group">
+            <div class="inset-row stack-item">
+              <div class="meta-edit-grid">
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Thể loại bộ truyện (cách nhau bằng dấu phẩy)</span>
+                  <input id="series-edit-genres" class="meta-edit-input" type="text" value="${escHtml(genres.join(', '))}" placeholder="Mystery & Detective, Thriller & Suspense" />
+                </label>
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Tags bộ truyện (cách nhau bằng dấu phẩy)</span>
+                  <input id="series-edit-tags" class="meta-edit-input" type="text" value="${escHtml(tags.join(', '))}" placeholder="Theo bộ, Trinh thám, Tiếng Anh" />
+                </label>
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Mô tả chung bộ truyện (Description chung)</span>
+                  <textarea id="series-edit-desc" class="book-review-textarea" rows="4" placeholder="Giới thiệu tổng quan về bối cảnh, nhân vật chính và nội dung xuyên suốt bộ truyện…">${escHtml(profile.description || '')}</textarea>
+                </label>
+              </div>
+              <div class="book-info-actions">
+                <button class="apple-pill-btn small" data-save-series-meta="${escHtml(seriesName)}" type="button">Lưu thông tin bộ truyện</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="inset-section">
+          <div class="inset-section-label">Mô tả chung bộ truyện (Series Description)</div>
+          <div class="inset-group">
+            <div class="inset-row stack-item">
+              <p class="book-info-desc">${escHtml(profile.description || '')}</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="inset-section">
+          <div class="inset-section-label">Các tập trong bộ (${books.length} cuốn · xếp #1 → #N)</div>
+          <div class="inset-group">
+            <div class="series-books-mini-list">
+              ${books
+                .slice(0, 12)
+                .map((b) => {
+                  const bp = Math.round(b.progress?.bookPercent || 0);
+                  return `
+                    <button class="series-book-mini-row" data-read-from-modal="${escHtml(b.id)}" type="button">
+                      <span class="series-mini-idx tabular">${b.seriesIndex != null ? `#${b.seriesIndex}` : '•'}</span>
+                      <span class="series-mini-title">${escHtml(b.title)}</span>
+                      <span class="series-mini-pct tabular">${bp > 0 ? `${bp}%` : 'Đọc'}</span>
+                    </button>
+                  `;
+                })
+                .join('')}
+              ${
+                books.length > 12
+                  ? `<div class="series-mini-more muted-text">… và ${books.length - 12} tập khác trong kệ bộ truyện</div>`
+                  : ''
+              }
+            </div>
+          </div>
+        </div>
+
+        <div class="book-info-actions" style="margin-top:12px">
+          <button class="apple-pill-btn secondary small" data-filter-series="${escHtml(seriesName)}" type="button">Xem kệ bộ truyện</button>
+          ${
+            nextBook
+              ? `<button class="apple-pill-btn small" data-read-from-modal="${escHtml(nextBook.id)}" type="button">${
+                  nextBook.seriesIndex != null ? `Đọc Tập #${nextBook.seriesIndex}` : 'Bắt đầu đọc'
+                }</button>`
+              : ''
+          }
+        </div>
+      `;
+    }
+
+    async autoEnrichSeries(seriesName, { silent = false } = {}) {
+      const key = this.canonicalSeriesKey(seriesName);
+      const metaMod = window.PaperInkMetadata;
+      if (!key || !metaMod?.enrichSeriesOnline || this.enrichingSeriesKeys.has(key)) return;
+
+      const books = this.getBooksForSeries(seriesName);
+      if (!books.length) return;
+
+      this.enrichingSeriesKeys.add(key);
+      if (this.activeSeriesInfoName && this.canonicalSeriesKey(this.activeSeriesInfoName) === key) {
+        this.renderSeriesInfoModal(this.activeSeriesInfoName);
+      }
+
+      try {
+        const res = await metaMod.enrichSeriesOnline(seriesName, books);
+        if (this.state.seriesMeta?.[key]?.manual) {
+          // Do not overwrite manual user overrides
+          return;
+        }
+        if (!this.state.seriesMeta) this.state.seriesMeta = {};
+        this.state.seriesMeta[key] = {
+          name: seriesName,
+          genres: Array.isArray(res.genres) && res.genres.length ? res.genres : ['General Fiction'],
+          tags: Array.isArray(res.tags) ? res.tags : ['Theo bộ'],
+          description: res.description || '',
+          enrichedOnline: Boolean(res.enrichedOnline),
+          manual: false,
+          updatedAt: Date.now(),
+        };
+        this.scheduleSync();
+        this.renderCurrentRoute();
+        if (!silent) {
+          this.toast(`Đã cập nhật thể loại & mô tả bộ "${seriesName}"!`);
+        }
+      } catch (err) {
+        console.warn('[PaperInk Series Enrich]', err);
+        if (!silent) this.toast('Đã tổng hợp thể loại & mô tả từ các tập trong bộ');
+      } finally {
+        this.enrichingSeriesKeys.delete(key);
+        if (
+          this.activeSeriesInfoName &&
+          this.canonicalSeriesKey(this.activeSeriesInfoName) === key &&
+          document.getElementById('book-info-modal')?.classList.contains('open')
+        ) {
+          this.renderSeriesInfoModal(this.activeSeriesInfoName);
+        }
+      }
+    }
+
+    saveSeriesMetaOverride(seriesName, fields) {
+      const key = this.canonicalSeriesKey(seriesName);
+      if (!key || !fields) return;
+      const parseCsv = (val) =>
+        String(val || '')
+          .split(/[,;]+/)
+          .map((s) => s.replace(/^#+/, '').trim())
+          .filter(Boolean);
+
+      const genres = parseCsv(fields.genres);
+      const tags = parseCsv(fields.tags);
+      const description = String(fields.description || '').trim();
+
+      if (!this.state.seriesMeta) this.state.seriesMeta = {};
+      this.state.seriesMeta[key] = {
+        name: seriesName,
+        genres: genres.length ? genres.slice(0, 6) : ['General Fiction'],
+        tags: tags.length ? tags.slice(0, 8) : ['Theo bộ'],
+        description,
+        manual: true,
+        updatedAt: Date.now(),
+      };
+      this.scheduleSync();
+      this.renderCurrentRoute();
+      if (this.activeSeriesInfoName && this.canonicalSeriesKey(this.activeSeriesInfoName) === key) {
+        this.renderSeriesInfoModal(this.activeSeriesInfoName);
+      }
+      this.toast(`Đã lưu thể loại & mô tả chung cho bộ "${seriesName}"!`);
+    }
+
     openBookInfoModal(bookId) {
       if (!bookId) return;
+      this.activeSeriesInfoName = null;
       this.activeBookInfoId = bookId;
       this.closeAllSheets();
+      const titleEl = document.getElementById('book-info-title');
+      if (titleEl) titleEl.textContent = 'Thông tin & Đánh giá sách';
       this.renderBookInfoModal(bookId);
       document.getElementById('book-info-backdrop')?.classList.add('open');
       document.getElementById('book-info-modal')?.classList.add('open');
@@ -4133,6 +4472,7 @@
           highlights: { ...this.state.highlights, ...(incoming.highlights || {}) },
           bookReviews: { ...this.state.bookReviews, ...(incoming.bookReviews || {}) },
           bookMetaOverrides: { ...(this.state.bookMetaOverrides || {}), ...(incoming.bookMetaOverrides || {}) },
+          seriesMeta: { ...(this.state.seriesMeta || {}), ...(incoming.seriesMeta || {}) },
           inkNotes: { ...this.state.inkNotes, ...(incoming.inkNotes || {}) },
           folders: Array.isArray(incoming.folders) ? incoming.folders : this.state.folders || [],
           hiddenBookIds: { ...(this.state.hiddenBookIds || {}), ...(incoming.hiddenBookIds || {}) },
@@ -4653,6 +4993,13 @@
           return;
         }
 
+        const seriesInfoBtn = e.target.closest('[data-open-series-info]');
+        if (seriesInfoBtn) {
+          e.stopPropagation();
+          this.openSeriesInfoModal(seriesInfoBtn.dataset.openSeriesInfo);
+          return;
+        }
+
         const infoBtn = e.target.closest('[data-open-book-info]');
         if (infoBtn) {
           e.stopPropagation();
@@ -4817,10 +5164,36 @@
         else document.exitFullscreen?.().catch(() => {});
       });
 
+      document.querySelector('.lib-header')?.addEventListener('click', (e) => {
+        const sBtn = e.target.closest('[data-open-series-info]');
+        if (sBtn) {
+          e.stopPropagation();
+          this.openSeriesInfoModal(sBtn.dataset.openSeriesInfo);
+        }
+      });
+
       // Book Info / Description / Rating Modal
       document.getElementById('book-info-close')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-backdrop')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-body')?.addEventListener('click', (e) => {
+        const autoSeriesBtn = e.target.closest('[data-auto-enrich-series]');
+        if (autoSeriesBtn) {
+          this.autoEnrichSeries(autoSeriesBtn.dataset.autoEnrichSeries, { silent: false });
+          return;
+        }
+        if (e.target.closest('#toggle-series-edit-btn')) {
+          document.getElementById('series-meta-edit-panel')?.classList.toggle('hidden');
+          return;
+        }
+        const saveSeriesBtn = e.target.closest('[data-save-series-meta]');
+        if (saveSeriesBtn) {
+          this.saveSeriesMetaOverride(saveSeriesBtn.dataset.saveSeriesMeta, {
+            genres: document.getElementById('series-edit-genres')?.value || '',
+            tags: document.getElementById('series-edit-tags')?.value || '',
+            description: document.getElementById('series-edit-desc')?.value || '',
+          });
+          return;
+        }
         const autoTagBtn = e.target.closest('[data-auto-tag-book]');
         if (autoTagBtn) {
           this.autoEnrichBook(autoTagBtn.dataset.autoTagBook, { silent: false });

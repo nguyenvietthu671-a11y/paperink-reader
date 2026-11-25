@@ -1018,6 +1018,176 @@
     };
   }
 
+  function synthesizeSeriesOverview(seriesName, books = []) {
+    const safeBooks = Array.isArray(books) ? [...books] : [];
+    safeBooks.sort((a, b) => (a.seriesIndex ?? 9999) - (b.seriesIndex ?? 9999));
+
+    const primaryAuthor =
+      safeBooks.map((b) => b.author).find((a) => a && !isUnknownAuthor(a)) || 'Unknown Author';
+
+    const genreFreq = new Map();
+    const tagFreq = new Map();
+    for (const b of safeBooks) {
+      for (const g of b.genres || []) {
+        if (!g || g === 'General Fiction') continue;
+        genreFreq.set(g, (genreFreq.get(g) || 0) + 1);
+      }
+      for (const t of b.tags || []) {
+        if (!t) continue;
+        tagFreq.set(t, (tagFreq.get(t) || 0) + 1);
+      }
+    }
+
+    const firstWithDesc = safeBooks.find((b) => b.description && b.description.trim().length >= 30);
+    const combinedText = `${seriesName} ${safeBooks.map((b) => `${b.title || ''} ${b.description || ''}`).slice(0, 5).join(' ')}`;
+    const inferred = inferGenresAndTags({
+      title: seriesName,
+      author: primaryAuthor,
+      description: combinedText,
+      subjects: Array.from(genreFreq.keys()),
+      series: seriesName,
+      language: safeBooks[0]?.language || '',
+      size: 0,
+    });
+
+    let genres = Array.from(genreFreq.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([g]) => g)
+      .slice(0, 4);
+    for (const ig of inferred.genres) {
+      if (genres.length >= 4) break;
+      if (ig !== 'General Fiction' && !genres.some((x) => x.toLowerCase() === ig.toLowerCase())) {
+        genres.push(ig);
+      }
+    }
+    if (!genres.length) genres = inferred.genres.length ? inferred.genres : ['General Fiction'];
+
+    let tags = Array.from(tagFreq.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([t]) => t)
+      .filter((t) => t !== 'Đọc nhanh' && t !== 'Trường thiên')
+      .slice(0, 6);
+    if (!tags.includes('Theo bộ')) tags.unshift('Theo bộ');
+    for (const it of inferred.tags) {
+      if (tags.length >= 6) break;
+      if (!tags.some((x) => x.toLowerCase() === it.toLowerCase())) tags.push(it);
+    }
+    tags = tags.slice(0, 6);
+
+    const viGenreTag = tags.find(
+      (t) => !['Theo bộ', 'Tiếng Anh', 'Tiếng Việt', 'Tiếng Nhật', 'Tiếng Trung', 'Tiếng Pháp', 'Tiếng Hàn', 'Tiếng Đức', 'Nổi bật', 'Đọc nhanh', 'Trường thiên'].includes(t)
+    );
+    const authorClause = !isUnknownAuthor(primaryAuthor) ? ` của tác giả ${primaryAuthor}` : '';
+    const genreClause = viGenreTag ? ` thuộc thể loại ${viGenreTag.toLowerCase()}` : '';
+    const introLine = `${seriesName} là bộ truyện${genreClause}${authorClause} (gồm ${safeBooks.length} cuốn trong thư viện của bạn).`;
+
+    let description = introLine;
+    if (firstWithDesc) {
+      const snippet = firstWithDesc.description.trim().slice(0, 520);
+      const bookLabel =
+        firstWithDesc.seriesIndex != null
+          ? `Tập #${firstWithDesc.seriesIndex} (${firstWithDesc.title})`
+          : firstWithDesc.title;
+      description = `${introLine}\n\nNội dung mở đầu — ${bookLabel}: ${snippet}`;
+    }
+
+    return {
+      series: seriesName,
+      name: seriesName,
+      author: primaryAuthor,
+      genres,
+      tags,
+      description,
+    };
+  }
+
+  async function enrichSeriesOnline(seriesName, books = []) {
+    const base = synthesizeSeriesOverview(seriesName, books);
+    const cleanName = String(seriesName || '').trim();
+    if (!cleanName) return { ...base, enrichedOnline: false };
+
+    const isVi = /[ăâđêôơưàáảãạèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵ]/i.test(cleanName) || base.tags.includes('Tiếng Việt');
+    const authorLast = !isUnknownAuthor(base.author)
+      ? base.author.split(',')[0].trim().split(/\s+/).pop().toLowerCase()
+      : '';
+
+    const wikiCandidates = isVi
+      ? [
+          `https://vi.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanName.replace(/\s+/g, '_'))}`,
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(`${cleanName} (book series)`.replace(/\s+/g, '_'))}`,
+        ]
+      : [
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(`${cleanName} (book series)`.replace(/\s+/g, '_'))}`,
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(`${cleanName} (novel series)`.replace(/\s+/g, '_'))}`,
+          `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanName.replace(/\s+/g, '_'))}`,
+        ];
+
+    const firstBook = [...(books || [])].sort((a, b) => (a.seriesIndex ?? 9999) - (b.seriesIndex ?? 9999))[0];
+    const appleQuery = firstBook
+      ? `${firstBook.title} ${!isUnknownAuthor(base.author) ? base.author.split(',')[0] : cleanName}`
+      : `${cleanName} ${!isUnknownAuthor(base.author) ? base.author.split(',')[0] : ''}`;
+
+    const [wikiResults, appleData] = await Promise.all([
+      Promise.all(wikiCandidates.map((u) => fetchJsonWithTimeout(u, 4200))),
+      fetchJsonWithTimeout(
+        `https://itunes.apple.com/search?media=ebook&entity=ebook&limit=4&term=${encodeURIComponent(appleQuery.trim())}`,
+        4200
+      ),
+    ]);
+
+    let wikiExtract = '';
+    for (const w of wikiResults) {
+      if (!w || w.type === 'disambiguation' || !w.extract || w.extract.length < 50) continue;
+      const hay = `${w.description || ''} ${w.extract}`.toLowerCase();
+      const looksBookRelated =
+        /\b(novel|novels|book|series|fictional|detective|character|author|writer|thriller|mystery|fantasy|trilogy|saga)\b|tiểu thuyết|truyện|nhân vật|tác giả/i.test(
+          hay
+        ) || (authorLast && authorLast.length >= 3 && hay.includes(authorLast));
+      if (looksBookRelated) {
+        wikiExtract = w.extract.trim().slice(0, 950);
+        break;
+      }
+    }
+
+    const extraSubjects = [...base.genres];
+    let appleDesc = '';
+    const appleItems = Array.isArray(appleData?.results) ? appleData.results : [];
+    for (const item of appleItems) {
+      if (Array.isArray(item.genres)) extraSubjects.push(...item.genres);
+      if (!appleDesc && item.description) {
+        appleDesc = decodeEntities(item.description)
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 700);
+      }
+    }
+
+    const finalDescription = wikiExtract || (appleDesc ? `${base.description.split('\n\n')[0]}\n\n${appleDesc}` : base.description);
+    const { genres, tags } = inferGenresAndTags({
+      title: cleanName,
+      author: base.author,
+      description: `${finalDescription} ${base.description}`,
+      subjects: extraSubjects,
+      series: cleanName,
+      language: isVi ? 'vi' : 'en',
+      size: 0,
+    });
+
+    const finalTags = [...tags];
+    if (!finalTags.includes('Theo bộ')) finalTags.unshift('Theo bộ');
+
+    return {
+      series: cleanName,
+      name: cleanName,
+      author: base.author,
+      genres: genres.length ? genres : base.genres,
+      tags: finalTags.slice(0, 6),
+      description: finalDescription,
+      enrichedOnline: Boolean(wikiExtract || appleDesc),
+    };
+  }
+
   return {
     normalizeAuthor,
     isSeriesSameAsAuthor,
@@ -1027,5 +1197,7 @@
     inferGenresAndTags,
     analyzeBookMetadata,
     enrichBookOnline,
+    synthesizeSeriesOverview,
+    enrichSeriesOnline,
   };
 });
