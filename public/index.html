@@ -1078,6 +1078,49 @@
         </div>
       </div>
 
+      <!-- P2P Direct Book Transfer Section (Works between Web PC & Mobile App across ANY network!) -->
+      <div id="p2p-sync-card" class="inset-section">
+        <div class="inset-section-label">Đồng bộ Tất cả Sách P2P (Trực tiếp Web Máy tính ⇄ App Điện thoại)</div>
+        <div class="inset-group">
+          <div class="inset-row stack-item">
+            <div class="sync-status-row">
+              <span id="p2p-status-badge" class="sync-status-pill">⚪ Chưa kết nối P2P</span>
+              <button class="apple-pill-btn small" id="p2p-host-btn" type="button">Chia sẻ sách từ máy tính</button>
+            </div>
+
+            <!-- Host info & QR box (visible when PC starts sharing) -->
+            <div id="p2p-host-box" class="qr-card hidden" style="margin-top:12px">
+              <strong class="apk-card-title">Quét mã để nhận toàn bộ sách trên điện thoại</strong>
+              <div id="p2p-qr" class="qr-box"></div>
+              <div class="qr-url-row">
+                <span>Mã phòng: <code id="p2p-room-code" style="font-size:1.05rem;font-weight:700;color:var(--accent)">...</code></span>
+                <button class="apple-pill-btn secondary small" id="p2p-copy-link-btn" type="button">Chép link</button>
+              </div>
+              <p class="setting-hint">Mở camera điện thoại Samsung S25 Ultra quét mã này: điện thoại sẽ kết nối P2P trực tiếp tới máy tính, nhận toàn bộ danh mục sách và cho phép đọc/tải bất kỳ cuốn nào!</p>
+            </div>
+
+            <!-- Client connection box (for phone) -->
+            <div id="p2p-client-box" style="margin-top:12px">
+              <label for="p2p-code-input" class="mini-label">Nhập mã kết nối từ máy tính (hoặc quét mã QR ở trên)</label>
+              <div class="native-server-row">
+                <input id="p2p-code-input" class="apple-text-input" type="text" placeholder="Ví dụ: ink-82a9bc" autocomplete="off" />
+                <button class="apple-pill-btn small" id="p2p-connect-btn" type="button">Kết nối P2P</button>
+              </div>
+            </div>
+
+            <!-- Batch download button & progress bar (visible when connected) -->
+            <button class="apple-pill-btn hidden" id="p2p-batch-download-btn" type="button" style="margin-top:12px;width:100%">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Tải toàn bộ sách về điện thoại (Đọc Offline không cần mạng)</span>
+            </button>
+            <div id="p2p-batch-progress-box" class="hidden" style="margin-top:10px">
+              <div id="p2p-batch-progress-text" class="mini-label" style="margin-bottom:4px">Đang tải sách: 0%</div>
+              <div class="mini-bar"><div id="p2p-batch-progress-fill" class="mini-bar-fill" style="width:0%"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Optional Cloud Sync via GitHub Private Gist (24/7 Progress & Notes Sync even when PC is off!) -->
       <div id="cloud-sync-card" class="inset-section">
         <div class="inset-section-label">Đồng bộ Đám mây 24/7 (Tiến độ &amp; Ghi chú S Pen qua GitHub Gist riêng tư)</div>
@@ -1187,11 +1230,13 @@
   <div id="toast" class="toast glass-chrome" role="status" aria-live="polite"></div>
 
   <script src="./vendor/jszip.min.js"></script>
+  <script src="./vendor/peerjs.min.js"></script>
   <script src="./js/db.js"></script>
   <script src="./js/shelf-decor.js"></script>
   <script src="./js/metadata-enricher.js"></script>
   <script src="./js/epub-engine.js"></script>
   <script src="./js/ink-canvas.js"></script>
+  <script src="./js/p2p-sync.js"></script>
   <script src="./js/dictionary-ui.js"></script>
   <script src="./js/reader.js"></script>
   <script src="./js/demo-book.js"></script>

@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'paperink-shell-v18';
+const SHELL_CACHE = 'paperink-shell-v19';
 const RUNTIME_CACHE = 'paperink-runtime-v1';
 
 const SHELL_ASSETS = [
@@ -7,11 +7,13 @@ const SHELL_ASSETS = [
   './manifest.webmanifest',
   './css/styles.css',
   './vendor/jszip.min.js',
+  './vendor/peerjs.min.js',
   './js/db.js',
   './js/shelf-decor.js',
   './js/metadata-enricher.js',
   './js/epub-engine.js',
   './js/ink-canvas.js',
+  './js/p2p-sync.js',
   './js/dictionary-ui.js',
   './js/reader.js',
   './js/demo-book.js',

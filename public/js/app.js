@@ -284,6 +284,8 @@
         openDictionary: (opts) => this.dictUI.lookup(opts),
         toast: (msg) => this.toast(msg),
       });
+
+      this.p2p = window.PaperInkP2P ? new window.PaperInkP2P(this) : null;
     }
 
     computeShelfCols() {
@@ -295,6 +297,7 @@
     }
 
     async init() {
+      if (!this.p2p && window.PaperInkP2P) this.p2p = new window.PaperInkP2P(this);
       this.checkUrlHashPairing();
       this.registerServiceWorker();
       this.bindUI();
@@ -330,8 +333,44 @@
               this.syncWithCloudGist(false);
             }, 500);
           }
+        } else if (hash.includes('p2p_pair=')) {
+          const raw = hash.replace(/^#+/, '');
+          const params = new URLSearchParams(raw);
+          const pairCode = params.get('p2p_pair');
+          if (pairCode) {
+            if (window.history && window.history.replaceState) {
+              window.history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+            setTimeout(() => {
+              if (!this.p2p && window.PaperInkP2P) this.p2p = new window.PaperInkP2P(this);
+              this.p2p?.connectToHost(pairCode);
+            }, 500);
+          }
         }
       } catch (_) {}
+    }
+
+    async startP2PHost() {
+      if (!this.p2p && window.PaperInkP2P) this.p2p = new window.PaperInkP2P(this);
+      if (!this.p2p) return;
+      this.toast('Đang khởi tạo phòng chia sẻ P2P…');
+      const res = await this.p2p.startHost();
+      if (!res) return;
+
+      const hostBox = document.getElementById('p2p-host-box');
+      const qrBox = document.getElementById('p2p-qr');
+      const codeEl = document.getElementById('p2p-room-code');
+
+      if (codeEl) codeEl.textContent = res.roomCode;
+      const pairUrl = `${window.location.origin}${window.location.pathname}#p2p_pair=${encodeURIComponent(res.roomCode)}`;
+      this._currentP2PPairUrl = pairUrl;
+
+      if (qrBox) {
+        const qrImgUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&color=12733f&data=${encodeURIComponent(pairUrl)}`;
+        qrBox.innerHTML = `<img src="${escHtml(qrImgUrl)}" alt="Mã QR kết nối P2P" style="width:100%;height:100%;object-fit:contain;border-radius:8px" />`;
+      }
+      hostBox?.classList.remove('hidden');
+      this.p2p.updateUiStatus();
     }
 
     registerServiceWorker() {
@@ -1021,6 +1060,7 @@
       if (this.cloudToken) {
         await this.syncWithCloudGist(silent);
       }
+      this.p2p?.broadcastState(this.state);
     }
 
     scheduleSync() {
@@ -3511,6 +3551,28 @@
         const offlineRec = await window.PaperInkDB.getOfflineBook(bookId);
         if (offlineRec && offlineRec.epubBlob) {
           epubBlob = offlineRec.epubBlob;
+        } else if (this.p2p && this.p2p.isClient && this.p2p.isConnected()) {
+          this.toast('Đang tải sách từ máy tính qua P2P…');
+          epubBlob = await this.p2p.requestBookFromHost(bookId, book.fileName);
+          if (epubBlob) {
+            window.PaperInkDB.saveOfflineBook({
+              id: book.id,
+              title: book.title,
+              author: book.author,
+              series: book.series || '',
+              seriesIndex: book.seriesIndex ?? null,
+              genres: Array.isArray(book.genres) ? book.genres : [],
+              tags: Array.isArray(book.tags) ? book.tags : [],
+              description: book.description || '',
+              language: book.language || 'en',
+              fileName: book.fileName || `${book.id}.epub`,
+              size: epubBlob.size,
+              savedAt: Date.now(),
+              isLocalImport: false,
+              coverBlob: null,
+              epubBlob,
+            }).then(() => this.reloadOfflineMeta()).catch(() => {});
+          }
         } else {
           this.toast('Đang mở sách Online…');
           const res = await fetch(this.apiUrl(`/api/books/${encodeURIComponent(bookId)}/file`));
@@ -5643,6 +5705,29 @@
         await this.deferredInstallPrompt.userChoice;
         this.deferredInstallPrompt = null;
         document.getElementById('pwa-install-btn')?.classList.add('hidden');
+      });
+
+      // P2P Book Syncing listeners
+      document.getElementById('p2p-host-btn')?.addEventListener('click', () => this.startP2PHost());
+      document.getElementById('p2p-copy-link-btn')?.addEventListener('click', () => {
+        const url = this._currentP2PPairUrl;
+        if (url) {
+          navigator.clipboard?.writeText(url).catch(() => {});
+          this.toast('Đã chép link kết nối P2P!');
+        }
+      });
+      document.getElementById('p2p-connect-btn')?.addEventListener('click', () => {
+        const inp = document.getElementById('p2p-code-input');
+        const code = (inp?.value || '').trim();
+        if (!code) {
+          this.toast('Vui lòng nhập mã phòng P2P');
+          return;
+        }
+        if (!this.p2p && window.PaperInkP2P) this.p2p = new window.PaperInkP2P(this);
+        this.p2p?.connectToHost(code);
+      });
+      document.getElementById('p2p-batch-download-btn')?.addEventListener('click', () => {
+        this.p2p?.requestBatchDownloadAll();
       });
 
       window.addEventListener('online', () => this.refreshFromServer(true));
