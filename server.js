@@ -79,7 +79,7 @@ function sendJson(res, status, data, extraHeaders = {}) {
   res.end(body);
 }
 
-function readJsonBody(req, maxBytes = 16 * 1024 * 1024) {
+function readJsonBody(req, maxBytes = 32 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
@@ -102,6 +102,35 @@ function readJsonBody(req, maxBytes = 16 * 1024 * 1024) {
     });
     req.on('error', reject);
   });
+}
+
+function readRawBody(req, maxBytes = 150 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        req.destroy();
+        reject(new Error('File too large (max 150MB)'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function sanitizeEpubFileName(rawName) {
+  let name = String(rawName || 'book.epub');
+  try {
+    name = decodeURIComponent(name);
+  } catch (_) {}
+  name = path.basename(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+  if (!name) name = `book_${Date.now()}.epub`;
+  if (!/\.epub$/i.test(name)) name += '.epub';
+  return name;
 }
 
 async function serveStaticFile(res, filePath, customHeaders = {}) {
@@ -130,15 +159,28 @@ async function main() {
 
   await Promise.all([library.init(), stateStore.init(), dictService.init()]);
 
+  // Watch PC books folder so newly copied/downloaded EPUBs auto-sync into Online library
+  let watchTimer = null;
+  try {
+    fs.watch(BOOKS_DIR, { persistent: false }, (_eventType, fileName) => {
+      if (fileName && !/\.epub$/i.test(String(fileName))) return;
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(() => {
+        library.scan().catch((err) => console.error('[PaperInk] Auto-rescan error:', err));
+      }, 1200);
+    });
+  } catch (_) {}
+
   const server = http.createServer(async (req, res) => {
     try {
       const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = decodeURIComponent(urlObj.pathname);
 
-      // Basic CORS for local convenience
+      // Full CORS + Chrome Private Network Access support for cross-origin PC <-> Web/PWA sync
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename, X-File-Name');
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
       if (req.method === 'OPTIONS') {
         res.writeHead(204);
         res.end();
@@ -182,6 +224,55 @@ async function main() {
         await library.scan();
         sendJson(res, 200, {
           ok: true,
+          count: library.books.length,
+          books: library.getPublicList(),
+        });
+        return;
+      }
+
+      // API: Upload EPUB directly into PC Online library folder (no bloated device storage needed!)
+      if (req.method === 'POST' && pathname === '/api/books/upload') {
+        const rawHeaderName =
+          req.headers['x-filename'] || req.headers['x-file-name'] || urlObj.searchParams.get('filename') || '';
+        const safeName = sanitizeEpubFileName(rawHeaderName);
+        const buf = await readRawBody(req);
+        if (!buf || buf.length < 32 || buf[0] !== 0x50 || buf[1] !== 0x4b) {
+          sendJson(res, 400, { error: 'Invalid EPUB file' });
+          return;
+        }
+
+        let targetName = safeName;
+        let targetPath = path.join(BOOKS_DIR, targetName);
+        const parsedName = path.parse(safeName);
+        let duplicateOfExisting = false;
+
+        // Avoid overwriting a different book with the same filename
+        for (let suffix = 1; suffix <= 99; suffix++) {
+          try {
+            const st = await fsp.stat(targetPath);
+            if (st.size === buf.length) {
+              duplicateOfExisting = true;
+              break;
+            }
+            targetName = `${parsedName.name}_${suffix}${parsedName.ext}`;
+            targetPath = path.join(BOOKS_DIR, targetName);
+          } catch (_) {
+            break;
+          }
+        }
+
+        if (!duplicateOfExisting) {
+          await fsp.writeFile(targetPath, buf);
+        }
+
+        await library.scan();
+        const uploadedBook =
+          library.getPublicList().find((b) => b.fileName === targetName) || null;
+        sendJson(res, 200, {
+          ok: true,
+          duplicate: duplicateOfExisting,
+          fileName: targetName,
+          book: uploadedBook,
           count: library.books.length,
           books: library.getPublicList(),
         });

@@ -26,7 +26,7 @@
     grayscale: false,
     tapDict: false,
     showHeaderFooter: true,
-    autoSaveOffline: true,
+    autoSaveOffline: false,
     updatedAt: 0,
   };
 
@@ -231,7 +231,14 @@
       this.dragState = null;
 
       this.syncTimer = null;
+      this.cloudSyncTimer = null;
       this.toastTimer = null;
+      this.lastSyncedAt = 0;
+      this.customServerUrl = this.readSavedServerUrl();
+      this.activeServerOrigin = '';
+      this.cloudToken = (localStorage.getItem('paperink_cloud_gist_token') || '').trim();
+      this.cloudGistId = (localStorage.getItem('paperink_cloud_gist_id') || '').trim();
+      this.lastCloudSyncAt = 0;
 
       this.dictUI = new window.PaperInkDictUI({
         onSaveVocab: (entry) => this.addVocabWord(entry),
@@ -253,7 +260,10 @@
           sPenOnly: this.inkCanvas.sPenOnly,
         }),
         onPageChanged: ({ bookId, pageKey, meta }) => this.loadInkForPage(bookId, pageKey, meta),
-        onBookClosed: () => this.inkCanvas.clearContext(),
+        onBookClosed: () => {
+          this.inkCanvas.clearContext();
+          this.flushSyncNow(true);
+        },
         saveProgress: (bookId, p) => this.updateProgress(bookId, p),
         onReadingActivity: (act) => this.recordReadingActivity(act),
         getBookmarks: (bookId) => this.state.bookmarks[bookId] || [],
@@ -523,15 +533,340 @@
       }
     }
 
-    async refreshFromServer() {
+    readSavedServerUrl() {
+      try {
+        const raw = (localStorage.getItem('paperink_server_url') || '').trim();
+        return raw ? raw.replace(/\/+$/, '') : '';
+      } catch (_) {
+        return '';
+      }
+    }
+
+    saveServerUrl(url) {
+      const clean = String(url || '').trim().replace(/\/+$/, '');
+      this.customServerUrl = clean;
+      try {
+        if (clean) localStorage.setItem('paperink_server_url', clean);
+        else localStorage.removeItem('paperink_server_url');
+      } catch (_) {}
+    }
+
+    apiUrl(apiPath) {
+      const p = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+      if (this.activeServerOrigin) return `${this.activeServerOrigin}${p}`;
+      return `.${p}`;
+    }
+
+    resolveServerAssetUrl(url) {
+      if (!url) return null;
+      if (/^(https?:|blob:|data:)/i.test(url)) return url;
+      return this.apiUrl(url);
+    }
+
+    async probeServerOrigin(origin, timeoutMs = 1100) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const base = origin ? origin.replace(/\/+$/, '') : '.';
+        const res = await fetch(`${base}/api/info`, { cache: 'no-store', signal: ctrl.signal });
+        if (!res.ok) return false;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) return false;
+        const data = await res.json();
+        return data && data.name === 'PaperInk';
+      } catch (_) {
+        return false;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    mergeIncomingState(incoming) {
+      if (!incoming || typeof incoming !== 'object') return;
+      const deleted = { ...(this.state.deletedIds || {}) };
+      if (incoming.deletedIds && typeof incoming.deletedIds === 'object') {
+        for (const [id, ts] of Object.entries(incoming.deletedIds)) {
+          if (!deleted[id] || ts > deleted[id]) deleted[id] = ts;
+        }
+      }
+      this.state.deletedIds = deleted;
+
+      if (incoming.hiddenBookIds && typeof incoming.hiddenBookIds === 'object') {
+        if (!this.state.hiddenBookIds) this.state.hiddenBookIds = {};
+        for (const [id, ts] of Object.entries(incoming.hiddenBookIds)) {
+          if (!this.state.hiddenBookIds[id] || ts > this.state.hiddenBookIds[id]) {
+            this.state.hiddenBookIds[id] = ts;
+          }
+        }
+      }
+
+      if (incoming.progress && typeof incoming.progress === 'object') {
+        for (const [bookId, p] of Object.entries(incoming.progress)) {
+          if (!p || typeof p !== 'object') continue;
+          const cur = this.state.progress[bookId];
+          if (!cur || (p.updatedAt || 0) >= (cur.updatedAt || 0)) {
+            this.state.progress[bookId] = p;
+          }
+        }
+      }
+
+      if (incoming.bookReviews && typeof incoming.bookReviews === 'object') {
+        for (const [bookId, rev] of Object.entries(incoming.bookReviews)) {
+          if (!rev || typeof rev !== 'object') continue;
+          const cur = this.state.bookReviews[bookId];
+          if (!cur || (rev.updatedAt || 0) >= (cur.updatedAt || 0)) {
+            this.state.bookReviews[bookId] = rev;
+          }
+        }
+      }
+
+      if (incoming.inkNotes && typeof incoming.inkNotes === 'object') {
+        for (const [bookId, pagesObj] of Object.entries(incoming.inkNotes)) {
+          if (!pagesObj || typeof pagesObj !== 'object') continue;
+          if (!this.state.inkNotes[bookId]) this.state.inkNotes[bookId] = {};
+          for (const [pageKey, pageNote] of Object.entries(pagesObj)) {
+            if (!pageNote || typeof pageNote !== 'object') continue;
+            const cur = this.state.inkNotes[bookId][pageKey];
+            if (!cur || (pageNote.updatedAt || 0) >= (cur.updatedAt || 0)) {
+              this.state.inkNotes[bookId][pageKey] = pageNote;
+            }
+          }
+        }
+      }
+
+      const mergeListById = (curList = [], inList = []) => {
+        const byId = new Map();
+        for (const item of [...(curList || []), ...(inList || [])]) {
+          if (!item || !item.id) continue;
+          const delTs = deleted[item.id] || 0;
+          const itemTs = item.updatedAt || item.createdAt || 0;
+          if (delTs >= itemTs) continue;
+          const prev = byId.get(item.id);
+          if (!prev || itemTs >= (prev.updatedAt || prev.createdAt || 0)) {
+            byId.set(item.id, item);
+          }
+        }
+        return Array.from(byId.values()).sort(
+          (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+        );
+      };
+
+      if (incoming.bookmarks && typeof incoming.bookmarks === 'object') {
+        for (const [bookId, list] of Object.entries(incoming.bookmarks)) {
+          if (Array.isArray(list)) {
+            this.state.bookmarks[bookId] = mergeListById(this.state.bookmarks[bookId], list);
+          }
+        }
+      }
+      if (incoming.highlights && typeof incoming.highlights === 'object') {
+        for (const [bookId, list] of Object.entries(incoming.highlights)) {
+          if (Array.isArray(list)) {
+            this.state.highlights[bookId] = mergeListById(this.state.highlights[bookId], list);
+          }
+        }
+      }
+      if (Array.isArray(incoming.folders)) {
+        this.state.folders = mergeListById(this.state.folders, incoming.folders);
+      }
+      if (Array.isArray(incoming.vocab)) {
+        this.state.vocab = mergeListById(this.state.vocab, incoming.vocab);
+      }
+      if (incoming.settings && (incoming.settings.updatedAt || 0) >= (this.state.settings?.updatedAt || 0)) {
+        this.state.settings = this.normalizeSettings(incoming.settings);
+      }
+      if (incoming.shelfConfig && (incoming.shelfConfig.updatedAt || 0) >= (this.state.shelfConfig?.updatedAt || 0)) {
+        this.state.shelfConfig = this.normalizeShelfConfig(incoming.shelfConfig);
+      }
+      if (incoming.readingStats && typeof incoming.readingStats === 'object') {
+        const rs = this.state.readingStats || { dailyMinutes: {}, dailyGoalMinutes: 30, pagesTurned: 0, updatedAt: 0 };
+        const inRs = incoming.readingStats;
+        if (inRs.dailyMinutes && typeof inRs.dailyMinutes === 'object') {
+          for (const [day, mins] of Object.entries(inRs.dailyMinutes)) {
+            if (typeof mins === 'number' && mins >= 0) {
+              rs.dailyMinutes[day] = Math.max(rs.dailyMinutes[day] || 0, mins);
+            }
+          }
+        }
+        if (typeof inRs.pagesTurned === 'number') {
+          rs.pagesTurned = Math.max(rs.pagesTurned || 0, inRs.pagesTurned);
+        }
+        if ((inRs.updatedAt || 0) >= (rs.updatedAt || 0)) {
+          if (inRs.dailyGoalMinutes > 0) rs.dailyGoalMinutes = inRs.dailyGoalMinutes;
+          rs.updatedAt = inRs.updatedAt || Date.now();
+        }
+        this.state.readingStats = rs;
+      }
+
+      if (this.inkCanvas?.bookId && this.inkCanvas?.pageKey && !this.inkCanvas.drawing) {
+        const latestPage = this.state.inkNotes?.[this.inkCanvas.bookId]?.[this.inkCanvas.pageKey];
+        if (latestPage && Array.isArray(latestPage.strokes)) {
+          this.inkCanvas.strokes = structuredClone(latestPage.strokes);
+          this.inkCanvas.redraw();
+        }
+      }
+    }
+
+    async syncWithCloudGist(silent = true) {
+      if (!this.cloudToken) return false;
+      const headers = {
+        Authorization: `Bearer ${this.cloudToken}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      };
+      const FILE_NAME = 'paperink-sync-state.json';
+
+      try {
+        let gistId = this.cloudGistId;
+        let remoteState = null;
+
+        if (!gistId) {
+          const listRes = await fetch('https://api.github.com/gists?per_page=30', { headers });
+          if (!listRes.ok) throw new Error(`GitHub ${listRes.status}`);
+          const gists = await listRes.json();
+          const found = (gists || []).find((g) => g.files && g.files[FILE_NAME]);
+          if (found) {
+            gistId = found.id;
+            this.cloudGistId = gistId;
+            localStorage.setItem('paperink_cloud_gist_id', gistId);
+          }
+        }
+
+        if (gistId) {
+          const gRes = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, { headers });
+          if (gRes.ok) {
+            const gData = await gRes.json();
+            const fileObj = gData?.files?.[FILE_NAME];
+            if (fileObj) {
+              let rawText = fileObj.content || '';
+              if (fileObj.truncated && fileObj.raw_url) {
+                const rawRes = await fetch(fileObj.raw_url);
+                if (rawRes.ok) rawText = await rawRes.text();
+              }
+              if (rawText) {
+                const parsed = JSON.parse(rawText);
+                remoteState = parsed?.state || parsed;
+              }
+            }
+          } else if (gRes.status === 404) {
+            gistId = '';
+            this.cloudGistId = '';
+            localStorage.removeItem('paperink_cloud_gist_id');
+          }
+        }
+
+        if (remoteState) {
+          this.mergeIncomingState(remoteState);
+          await window.PaperInkDB.setKV('state', this.state);
+          this.applySettingsToDOM();
+        }
+
+        const payload = JSON.stringify({
+          app: 'PaperInk',
+          version: 4,
+          syncedAt: Date.now(),
+          state: this.state,
+        });
+
+        if (gistId) {
+          const patchRes = await fetch(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ files: { [FILE_NAME]: { content: payload } } }),
+          });
+          if (!patchRes.ok) throw new Error(`GitHub PATCH ${patchRes.status}`);
+        } else {
+          const createRes = await fetch('https://api.github.com/gists', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              description: 'PaperInk Private Sync (Reading Progress, Notes & S Pen Ink)',
+              public: false,
+              files: { [FILE_NAME]: { content: payload } },
+            }),
+          });
+          if (!createRes.ok) throw new Error(`GitHub POST ${createRes.status}`);
+          const created = await createRes.json();
+          this.cloudGistId = created.id || '';
+          if (this.cloudGistId) localStorage.setItem('paperink_cloud_gist_id', this.cloudGistId);
+        }
+
+        this.lastCloudSyncAt = Date.now();
+        this.updateSyncStatusUI();
+        if (!silent) this.toast('Đã đồng bộ Cloud (tiến độ & ghi chú S Pen)!');
+        return true;
+      } catch (err) {
+        console.warn('[PaperInk Cloud Sync]', err);
+        if (!silent) this.toast('Token Cloud không hợp lệ hoặc thiếu quyền gist');
+        return false;
+      }
+    }
+
+    updateSyncStatusUI() {
       const dot = document.getElementById('connection-dot');
+      const pcBadge = document.getElementById('sync-status-badge');
+      const cloudBadge = document.getElementById('cloud-sync-status');
+      const cloudClear = document.getElementById('cloud-sync-clear-btn');
+
+      const fmtTime = (ts) =>
+        ts ? new Date(ts).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+
+      if (dot) {
+        const connected = this.isOnlineToServer || Boolean(this.lastCloudSyncAt);
+        dot.classList.toggle('online', connected);
+        dot.classList.toggle('offline', !connected);
+        dot.title = this.isOnlineToServer
+          ? `Đã kết nối kho PC (${this.serverBooks.length} sách Online) · Đồng bộ lúc ${fmtTime(this.lastSyncedAt) || 'vừa xong'}`
+          : this.cloudToken
+          ? `Cloud Sync đang hoạt động · ${fmtTime(this.lastCloudSyncAt) || 'sẵn sàng'}`
+          : 'Chế độ Offline — chạm để cài đặt đồng bộ PC / Cloud';
+      }
+
+      if (pcBadge) {
+        if (this.isOnlineToServer) {
+          pcBadge.textContent = `Đã kết nối PC · ${this.serverBooks.length} sách Online${
+            this.lastSyncedAt ? ` · ${fmtTime(this.lastSyncedAt)}` : ''
+          }`;
+          pcBadge.classList.add('connected');
+        } else {
+          pcBadge.textContent = 'Chưa kết nối máy chủ PC (đang chạy Offline)';
+          pcBadge.classList.remove('connected');
+        }
+      }
+
+      if (cloudBadge) {
+        if (this.cloudToken) {
+          cloudBadge.textContent = this.lastCloudSyncAt
+            ? `Cloud Sync đã bật · Đồng bộ lúc ${fmtTime(this.lastCloudSyncAt)}`
+            : 'Cloud Sync đã lưu token · Đang chờ đồng bộ';
+          cloudBadge.classList.add('connected');
+        } else {
+          cloudBadge.textContent = 'Chưa kích hoạt Cloud Sync';
+          cloudBadge.classList.remove('connected');
+        }
+      }
+      cloudClear?.classList.toggle('hidden', !this.cloudToken);
+      document.getElementById('more-rescan-btn')?.classList.toggle('hidden', !this.isOnlineToServer);
+    }
+
+    async refreshFromServer(silent = true) {
       const staticHost = this.isStaticWebHost();
 
-      if (!staticHost) {
+      let candidateOrigin = null;
+      if (!staticHost && !this.customServerUrl) {
+        candidateOrigin = '';
+      } else if (this.customServerUrl) {
+        candidateOrigin = this.customServerUrl;
+      } else if (staticHost && !/android|iphone|ipad/i.test(navigator.userAgent || '')) {
+        const localAlive = await this.probeServerOrigin('http://localhost:3000', 850);
+        if (localAlive) candidateOrigin = 'http://localhost:3000';
+      }
+
+      if (candidateOrigin !== null) {
+        this.activeServerOrigin = candidateOrigin;
         try {
           const [libRes, syncRes] = await Promise.all([
-            fetch('./api/library', { cache: 'no-store' }),
-            fetch('./api/state/sync', {
+            fetch(this.apiUrl('/api/library'), { cache: 'no-store' }),
+            fetch(this.apiUrl('/api/state/sync'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(this.state),
@@ -545,32 +880,16 @@
               window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
             }
             this.isOnlineToServer = true;
+          } else {
+            this.isOnlineToServer = false;
           }
 
           if (syncRes.ok) {
             const merged = await syncRes.json();
-            this.state = {
-              progress: merged.progress || {},
-              bookmarks: merged.bookmarks || {},
-              highlights: merged.highlights || {},
-              bookReviews: merged.bookReviews || {},
-              inkNotes: merged.inkNotes || {},
-              folders: Array.isArray(merged.folders) ? merged.folders : this.state.folders || [],
-              hiddenBookIds: merged.hiddenBookIds || this.state.hiddenBookIds || {},
-              vocab: Array.isArray(merged.vocab) ? merged.vocab : [],
-              deletedIds: merged.deletedIds || {},
-              settings: this.normalizeSettings(merged.settings || this.state.settings),
-              readingStats: {
-                dailyMinutes: merged.readingStats?.dailyMinutes || {},
-                dailyGoalMinutes: merged.readingStats?.dailyGoalMinutes || 30,
-                pagesTurned: merged.readingStats?.pagesTurned || 0,
-                updatedAt: merged.readingStats?.updatedAt || 0,
-              },
-              shelfConfig: this.normalizeShelfConfig(merged.shelfConfig || this.state.shelfConfig),
-            };
+            this.mergeIncomingState(merged);
             await window.PaperInkDB.setKV('state', this.state);
             this.applySettingsToDOM();
-            this.applyBackgroundToDOM();
+            this.lastSyncedAt = Date.now();
           }
         } catch (_) {
           this.isOnlineToServer = false;
@@ -579,41 +898,76 @@
         this.isOnlineToServer = false;
       }
 
-      // Hide PC-only rescan row when running as standalone public website
-      document.getElementById('more-rescan-btn')?.classList.toggle('hidden', !this.isOnlineToServer);
-
-      // Seed 1 public-domain classic starter book when library is completely empty so visitors can test right away
-      await this.ensureStarterSampleBook();
-
-      if (dot) {
-        if (staticHost) {
-          dot.classList.add('online');
-          dot.classList.remove('offline');
-          dot.title = 'PaperInk Web · Lưu trữ riêng tư ngay trên thiết bị (hỗ trợ Offline)';
-        } else {
-          dot.classList.toggle('online', this.isOnlineToServer);
-          dot.classList.toggle('offline', !this.isOnlineToServer);
-          dot.title = this.isOnlineToServer ? 'Đã kết nối thư viện PC' : 'Chế độ Offline';
-        }
+      if (this.cloudToken) {
+        await this.syncWithCloudGist(true);
       }
 
+      await this.ensureStarterSampleBook();
+
+      this.updateSyncStatusUI();
       this.renderCurrentRoute();
+      if (!silent) {
+        if (this.isOnlineToServer) {
+          this.toast(`Đã đồng bộ ${this.serverBooks.length} sách Online, tiến độ & ghi chú!`);
+        } else if (this.cloudToken) {
+          this.toast('Đã đồng bộ tiến độ & ghi chú lên Cloud!');
+        } else {
+          this.toast('Không tìm thấy máy chủ PC — hãy chạy start-paperink.bat trên máy tính');
+        }
+      }
     }
 
-    scheduleSync() {
+    async flushSyncNow(silent = true) {
       window.PaperInkDB.setKV('state', this.state).catch(() => {});
-      if (!this.isOnlineToServer || this.isStaticWebHost()) return;
-      clearTimeout(this.syncTimer);
-      this.syncTimer = setTimeout(async () => {
+      if (this.isOnlineToServer) {
         try {
-          const res = await fetch('./api/state/sync', {
+          const res = await fetch(this.apiUrl('/api/state/sync'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(this.state),
           });
-          if (res.ok) this.isOnlineToServer = true;
+          if (res.ok) {
+            const merged = await res.json();
+            this.mergeIncomingState(merged);
+            await window.PaperInkDB.setKV('state', this.state);
+            this.lastSyncedAt = Date.now();
+            this.updateSyncStatusUI();
+          }
         } catch (_) {}
-      }, 650);
+      }
+      if (this.cloudToken) {
+        await this.syncWithCloudGist(silent);
+      }
+    }
+
+    scheduleSync() {
+      window.PaperInkDB.setKV('state', this.state).catch(() => {});
+      if (this.isOnlineToServer) {
+        clearTimeout(this.syncTimer);
+        this.syncTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(this.apiUrl('/api/state/sync'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.state),
+            });
+            if (res.ok) {
+              const merged = await res.json();
+              this.mergeIncomingState(merged);
+              window.PaperInkDB.setKV('state', this.state).catch(() => {});
+              this.isOnlineToServer = true;
+              this.lastSyncedAt = Date.now();
+              this.updateSyncStatusUI();
+            }
+          } catch (_) {}
+        }, 650);
+      }
+      if (this.cloudToken) {
+        clearTimeout(this.cloudSyncTimer);
+        this.cloudSyncTimer = setTimeout(() => {
+          this.syncWithCloudGist(true);
+        }, 2500);
+      }
     }
 
     // ---- State Mutators ----
@@ -1135,8 +1489,9 @@
           genres: Array.isArray(b.genres) && b.genres.length ? b.genres : ['General Fiction'],
           series: b.series || '',
           seriesIndex: b.seriesIndex ?? null,
+          isOnline: true,
           isOffline: isOff,
-          coverDisplayUrl: offCover || b.coverUrl || null,
+          coverDisplayUrl: offCover || this.resolveServerAssetUrl(b.coverUrl),
           progress: this.state.progress[b.id] || null,
           review: this.state.bookReviews?.[b.id] || null,
         });
@@ -1155,6 +1510,7 @@
             size: off.size || 0,
             mtimeMs: off.savedAt || 0,
             hasCover: Boolean(off.hasCoverBlob),
+            isOnline: false,
             isOffline: true,
             isLocalImport: Boolean(off.isLocalImport),
             isDemoSample: Boolean(off.isDemoSample),
@@ -1681,10 +2037,12 @@
         if (subEl) subEl.textContent = `${scoped.length} cuốn`;
       } else {
         if (titleEl) titleEl.textContent = 'Kệ sách';
+        const onlineCnt = all.filter((b) => b.isOnline).length;
         const offlineCnt = all.filter((b) => b.isOffline).length;
-        if (subEl) {
-          subEl.textContent = `${all.length} cuốn${offlineCnt ? ` · ${offlineCnt} Offline` : ''}`;
-        }
+        const parts = [`${all.length} cuốn`];
+        if (onlineCnt) parts.push(`${onlineCnt} Online`);
+        if (offlineCnt) parts.push(`${offlineCnt} Offline`);
+        if (subEl) subEl.textContent = parts.join(' · ');
       }
 
       // Render custom folders strip on home shelf
@@ -1693,13 +2051,16 @@
       const readingBooks = scoped
         .filter((b) => b.progress && b.progress.updatedAt)
         .sort((a, b) => (b.progress.updatedAt || 0) - (a.progress.updatedAt || 0));
+      const onlineBooks = scoped.filter((b) => b.isOnline);
       const offlineBooks = scoped.filter((b) => b.isOffline);
 
       const elAll = document.getElementById('tab-count-all');
       const elRead = document.getElementById('tab-count-reading');
+      const elOn = document.getElementById('tab-count-online');
       const elOff = document.getElementById('tab-count-offline');
       if (elAll) elAll.textContent = String(scoped.length);
       if (elRead) elRead.textContent = String(readingBooks.length);
+      if (elOn) elOn.textContent = String(onlineBooks.length);
       if (elOff) elOff.textContent = String(offlineBooks.length);
 
       // Compact Apple Now-Reading Banner
@@ -1725,6 +2086,7 @@
 
       let filtered = scoped;
       if (this.shelfFilter === 'reading') filtered = readingBooks;
+      else if (this.shelfFilter === 'online') filtered = onlineBooks;
       else if (this.shelfFilter === 'offline') filtered = offlineBooks;
 
       if (this.searchQuery) {
@@ -1778,22 +2140,29 @@
 
       if (filtered.length === 0) {
         container.className = '';
+        const isOnlineEmpty = this.shelfFilter === 'online' && !this.searchQuery;
         container.innerHTML = `
           <div class="empty-state glass-card">
             <p class="empty-title">${
-              this.shelfFilter === 'offline'
+              isOnlineEmpty
+                ? 'Chưa có sách Online từ máy tính'
+                : this.shelfFilter === 'offline'
                 ? 'Chưa có sách nào lưu Offline'
                 : this.searchQuery
                 ? 'Không tìm thấy cuốn sách phù hợp'
                 : 'Kệ sách của bạn đang trống'
             }</p>
             <p class="muted-text">${
-              this.searchQuery
+              isOnlineEmpty
+                ? 'Chạy start-paperink.bat trên máy tính rồi kết nối đồng bộ để đọc toàn bộ kho EPUB trực tuyến không tốn bộ nhớ máy.'
+                : this.searchQuery
                 ? 'Thử tìm bằng tên tác giả, thể loại hoặc bộ truyện khác.'
-                : 'Chọn file .EPUB trên điện thoại/máy tính (hoặc kéo thả vào đây) để tự động xếp lên kệ gỗ 3D và đọc 100% Offline.'
+                : 'Chọn file .EPUB trên điện thoại/máy tính (hoặc kéo thả vào đây) để tự động xếp lên kệ gỗ 3D.'
             }</p>
             ${
-              !this.searchQuery
+              isOnlineEmpty
+                ? `<div style="margin-top:16px"><button class="apple-pill-btn" data-open-sync="1" type="button">Kết nối &amp; Đồng bộ PC</button></div>`
+                : !this.searchQuery
                 ? `<div style="margin-top:16px"><button class="apple-pill-btn" data-trigger-import="1" type="button">${ICONS.plus}<span>Thêm sách .EPUB từ máy</span></button></div>`
                 : ''
             }
@@ -2828,14 +3197,14 @@
       if (!silent) this.renderCurrentRoute();
 
       try {
-        const res = await fetch(`./api/books/${encodeURIComponent(bookId)}/file`);
+        const res = await fetch(this.apiUrl(`/api/books/${encodeURIComponent(bookId)}/file`));
         if (!res.ok) throw new Error('Download failed');
         const epubBlob = await res.blob();
 
         let coverBlob = null;
         if (book.coverUrl) {
           try {
-            const cRes = await fetch(book.coverUrl);
+            const cRes = await fetch(this.resolveServerAssetUrl(book.coverUrl));
             if (cRes.ok) coverBlob = await cRes.blob();
           } catch (_) {}
         }
@@ -2902,8 +3271,8 @@
         if (offlineRec && offlineRec.epubBlob) {
           epubBlob = offlineRec.epubBlob;
         } else {
-          this.toast('Đang mở sách…');
-          const res = await fetch(`./api/books/${encodeURIComponent(bookId)}/file`);
+          this.toast('Đang mở sách Online…');
+          const res = await fetch(this.apiUrl(`/api/books/${encodeURIComponent(bookId)}/file`));
           if (!res.ok) throw new Error('Không thể tải sách từ PC');
           epubBlob = await res.blob();
 
@@ -2911,7 +3280,7 @@
             let coverBlob = null;
             if (book.coverUrl) {
               try {
-                const cRes = await fetch(book.coverUrl);
+                const cRes = await fetch(this.resolveServerAssetUrl(book.coverUrl));
                 if (cRes.ok) coverBlob = await cRes.blob();
               } catch (_) {}
             }
@@ -2951,9 +3320,55 @@
 
     async importLocalEpubFiles(files) {
       if (!files || !files.length) return;
+      const validFiles = Array.from(files).filter((f) => /\.epub$/i.test(f.name));
+      if (!validFiles.length) {
+        this.toast('Vui lòng chọn tệp .epub hợp lệ');
+        return;
+      }
+
+      // When connected to PC Server: upload EPUBs straight into PC Online library pool (no heavy phone storage!)
+      if (this.isOnlineToServer) {
+        this.toast(`Đang tải ${validFiles.length} cuốn lên mục Online…`);
+        let uploaded = 0;
+        let lastBooks = null;
+        for (const file of validFiles) {
+          try {
+            const res = await fetch(this.apiUrl('/api/books/upload'), {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/epub+zip',
+                'X-Filename': encodeURIComponent(file.name),
+              },
+              body: file,
+            });
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (data.ok) {
+              uploaded++;
+              if (data.book?.id && this.state.hiddenBookIds?.[data.book.id]) {
+                delete this.state.hiddenBookIds[data.book.id];
+              }
+              if (Array.isArray(data.books)) lastBooks = data.books;
+            }
+          } catch (err) {
+            console.error('Upload EPUB to PC Online error:', err);
+          }
+        }
+        if (uploaded > 0) {
+          if (lastBooks) {
+            this.serverBooks = lastBooks;
+            window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+          }
+          this.scheduleSync();
+          this.renderCurrentRoute();
+          this.toast(`Đã tải ${uploaded} cuốn vào mục Online (đồng bộ PC ↔ điện thoại)!`);
+          return;
+        }
+      }
+
+      // Fallback when offline / standalone web: save directly to local Offline IndexedDB
       let imported = 0;
-      for (const file of Array.from(files)) {
-        if (!/\.epub$/i.test(file.name)) continue;
+      for (const file of validFiles) {
         try {
           const parsed = await window.PaperInkEpub.loadFromBlob(file);
           const coverBlob = await parsed.getCoverBlob();
@@ -3351,15 +3766,25 @@
       const urlEl = document.getElementById('connect-url-text');
       const flagCmd = document.getElementById('chrome-flag-origin');
       const httpStep = document.getElementById('http-lan-flag-step');
+      const srvInp = document.getElementById('native-server-url-input');
+      const cloudInp = document.getElementById('cloud-gist-token-input');
+
+      if (srvInp) {
+        srvInp.value = this.customServerUrl || this.activeServerOrigin || '';
+      }
+      if (cloudInp) {
+        cloudInp.value = this.cloudToken ? '••••••••••••••••' : '';
+      }
+      this.updateSyncStatusUI();
 
       const currentUrl = `${window.location.origin}${window.location.pathname}`;
       const isHttps = window.location.protocol === 'https:';
       httpStep?.classList.toggle('hidden', isHttps);
 
       let loadedFromServer = false;
-      if (this.isOnlineToServer && !this.isStaticWebHost()) {
+      if (this.isOnlineToServer) {
         try {
-          const res = await fetch('./api/info');
+          const res = await fetch(this.apiUrl('/api/info'));
           if (res.ok) {
             const info = await res.json();
             if (qrBox) qrBox.innerHTML = info.qrSvg || '';
@@ -3479,13 +3904,14 @@
         this.closeAllSheets();
         this.toast('Đang quét lại kho sách trên PC…');
         try {
-          const res = await fetch('./api/library/rescan', { method: 'POST' });
+          const res = await fetch(this.apiUrl('/api/library/rescan'), { method: 'POST' });
           if (res.ok) {
             const data = await res.json();
             this.serverBooks = data.books || [];
             window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+            this.updateSyncStatusUI();
             this.renderCurrentRoute();
-            this.toast(`Đã tìm thấy ${this.serverBooks.length} cuốn EPUB!`);
+            this.toast(`Đã tìm thấy ${this.serverBooks.length} cuốn EPUB Online!`);
           }
         } catch (_) {
           this.toast('Không kết nối được tới máy chủ PC');
@@ -3804,6 +4230,12 @@
           return;
         }
 
+        const openSync = e.target.closest('[data-open-sync]');
+        if (openSync) {
+          this.openConnectModal();
+          return;
+        }
+
         const triggerImport = e.target.closest('[data-trigger-import]');
         if (triggerImport) {
           document.getElementById('import-epub-input')?.click();
@@ -3985,6 +4417,12 @@
       document.getElementById('book-info-close')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-backdrop')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-body')?.addEventListener('click', (e) => {
+        const openSync = e.target.closest('[data-open-sync]');
+        if (openSync) {
+          this.openConnectModal();
+          return;
+        }
+
         const triggerImport = e.target.closest('[data-trigger-import]');
         if (triggerImport) {
           document.getElementById('import-epub-input')?.click();
@@ -4236,8 +4674,55 @@
         }
       });
 
+      document.getElementById('connection-dot')?.addEventListener('click', () => this.openConnectModal());
       document.getElementById('connect-backdrop')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('connect-close-btn')?.addEventListener('click', () => this.closeAllSheets());
+      document.getElementById('native-server-save-btn')?.addEventListener('click', async () => {
+        const inp = document.getElementById('native-server-url-input');
+        const val = (inp?.value || '').trim();
+        if (val && !/^https?:\/\//i.test(val)) {
+          this.toast('Địa chỉ phải bắt đầu bằng http:// hoặc https://');
+          return;
+        }
+        this.saveServerUrl(val);
+        this.toast(val ? 'Đang kết nối máy chủ PC…' : 'Đã đặt lại kết nối mặc định…');
+        await this.refreshFromServer(false);
+      });
+      document.getElementById('sync-now-btn')?.addEventListener('click', async () => {
+        this.toast('Đang đồng bộ kho EPUB, tiến độ & ghi chú…');
+        await this.refreshFromServer(false);
+      });
+      document.getElementById('cloud-sync-save-btn')?.addEventListener('click', async () => {
+        const inp = document.getElementById('cloud-gist-token-input');
+        const raw = (inp?.value || '').trim();
+        if (!raw || raw.startsWith('••')) {
+          if (this.cloudToken) {
+            await this.syncWithCloudGist(false);
+          } else {
+            this.toast('Vui lòng dán GitHub Token (quyền gist)');
+          }
+          return;
+        }
+        this.cloudToken = raw;
+        this.cloudGistId = '';
+        localStorage.setItem('paperink_cloud_gist_token', raw);
+        localStorage.removeItem('paperink_cloud_gist_id');
+        if (inp) inp.value = '••••••••••••••••';
+        this.toast('Đang đồng bộ tiến độ & ghi chú lên Cloud…');
+        const ok = await this.syncWithCloudGist(false);
+        if (ok) this.renderCurrentRoute();
+      });
+      document.getElementById('cloud-sync-clear-btn')?.addEventListener('click', () => {
+        this.cloudToken = '';
+        this.cloudGistId = '';
+        this.lastCloudSyncAt = 0;
+        localStorage.removeItem('paperink_cloud_gist_token');
+        localStorage.removeItem('paperink_cloud_gist_id');
+        const inp = document.getElementById('cloud-gist-token-input');
+        if (inp) inp.value = '';
+        this.updateSyncStatusUI();
+        this.toast('Đã gỡ kết nối Cloud Sync');
+      });
       document.getElementById('copy-lan-url-btn')?.addEventListener('click', () => {
         const txt = document.getElementById('connect-url-text')?.textContent || '';
         navigator.clipboard?.writeText(txt).catch(() => {});
@@ -4251,12 +4736,28 @@
         document.getElementById('pwa-install-btn')?.classList.add('hidden');
       });
 
-      window.addEventListener('online', () => this.refreshFromServer());
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden' && this.reader.epub) {
-          this.reader.persistProgress();
+      window.addEventListener('online', () => this.refreshFromServer(true));
+      window.addEventListener('focus', () => {
+        if (this.isOnlineToServer || this.cloudToken) {
+          this.flushSyncNow(true);
         }
       });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          if (this.reader.epub) this.reader.persistProgress();
+          this.flushSyncNow(true);
+        } else if (document.visibilityState === 'visible') {
+          if (this.isOnlineToServer || this.cloudToken) {
+            this.refreshFromServer(true);
+          }
+        }
+      });
+      // Periodic 30s bidirectional sync heartbeat while tab is active
+      setInterval(() => {
+        if (document.visibilityState === 'visible' && (this.isOnlineToServer || this.cloudToken)) {
+          this.flushSyncNow(true);
+        }
+      }, 30000);
     }
   }
 

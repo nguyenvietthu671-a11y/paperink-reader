@@ -144,6 +144,9 @@
               <button class="quiet-tab" data-filter="reading" role="tab" aria-selected="false" type="button">
                 Đang đọc <span id="tab-count-reading" class="q-num">0</span>
               </button>
+              <button class="quiet-tab" data-filter="online" role="tab" aria-selected="false" type="button">
+                Online <span id="tab-count-online" class="q-num">0</span>
+              </button>
               <button class="quiet-tab" data-filter="offline" role="tab" aria-selected="false" type="button">
                 Offline <span id="tab-count-offline" class="q-num">0</span>
               </button>
@@ -384,28 +387,106 @@
       </div>
     </header>
 
-    <!-- Samsung Notes-Style Floating S Pen Toolbar -->
+    <!-- Samsung Notes-Style Expandable Pen Settings & Curated Color Palette Panel -->
+    <div id="pen-detail-panel" class="pen-detail-panel glass-chrome" role="dialog" aria-label="Tùy chỉnh nét bút và bảng màu S Pen">
+      <div class="pen-detail-head">
+        <div class="pen-detail-title-wrap">
+          <strong id="pen-detail-title">Bút máy</strong>
+          <span class="pen-detail-sub">Chạm vào loại bút lần nữa để ẩn/hiện</span>
+        </div>
+        <button class="pen-mini-btn" id="pen-detail-close" type="button" aria-label="Thu gọn bảng bút">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+      </div>
+
+      <!-- Live Samsung Notes Ink Wave Preview -->
+      <div class="pen-preview-box">
+        <canvas id="pen-preview-canvas" class="pen-preview-canvas" aria-label="Xem trước nét bút"></canvas>
+      </div>
+
+      <!-- Stroke Width & Opacity Controls -->
+      <div id="pen-stroke-controls" class="pen-detail-block">
+        <div class="pen-quick-sizes" role="group" aria-label="Cỡ nét nhanh">
+          <button class="pen-size-btn" data-pensize="1.2" type="button" title="Siêu mảnh (1.2)"><span style="width:4px;height:4px"></span></button>
+          <button class="pen-size-btn active" data-pensize="2.4" type="button" title="Mảnh (2.4)"><span style="width:7px;height:7px"></span></button>
+          <button class="pen-size-btn" data-pensize="3.6" type="button" title="Vừa (3.6)"><span style="width:10px;height:10px"></span></button>
+          <button class="pen-size-btn" data-pensize="5.4" type="button" title="Đậm (5.4)"><span style="width:13px;height:13px"></span></button>
+          <button class="pen-size-btn" data-pensize="8.0" type="button" title="Rất đậm (8.0)"><span style="width:16px;height:16px"></span></button>
+        </div>
+
+        <div class="pen-slider-row">
+          <label for="pen-width-slider">Độ dày</label>
+          <input id="pen-width-slider" class="apple-range pen-compact-range" type="range" min="0.8" max="12" step="0.2" value="2.4" />
+          <span id="pen-width-val" class="tabular">2.4px</span>
+        </div>
+        <div class="pen-slider-row">
+          <label for="pen-opacity-slider">Độ đậm</label>
+          <input id="pen-opacity-slider" class="apple-range pen-compact-range" type="range" min="15" max="100" step="1" value="96" />
+          <span id="pen-opacity-val" class="tabular">96%</span>
+        </div>
+
+        <label id="pen-highlighter-row" class="pen-straight-row hidden" for="pen-straight-hl">
+          <span>Bút dạ quang kẻ thẳng (Straight Highlighter)</span>
+          <input id="pen-straight-hl" class="ios-switch" type="checkbox" />
+        </label>
+      </div>
+
+      <!-- Dual-Mode Eraser Controls (Stroke vs Area Eraser like Samsung Notes) -->
+      <div id="pen-eraser-controls" class="pen-detail-block hidden">
+        <div class="ios-segmented compact">
+          <button class="seg-opt active" data-eraser-mode="stroke" type="button">Tẩy theo nét</button>
+          <button class="seg-opt" data-eraser-mode="area" type="button">Tẩy vùng</button>
+        </div>
+        <div class="pen-slider-row" style="margin-top:8px">
+          <label for="pen-eraser-size">Cỡ tẩy</label>
+          <input id="pen-eraser-size" class="apple-range pen-compact-range" type="range" min="10" max="44" step="2" value="18" />
+          <span id="pen-eraser-size-val" class="tabular">18px</span>
+        </div>
+      </div>
+
+      <!-- Curated Color Palettes (Samsung Notes Palette Suggestions) -->
+      <div id="pen-colors-section" class="pen-detail-block">
+        <div class="pen-pal-head">
+          <span class="pen-pal-label">Gợi ý bảng màu</span>
+          <label class="pen-custom-wheel" title="Chọn màu tự do">
+            <input id="pen-custom-color" type="color" value="#0B57D0" aria-label="Chọn màu bút tự do" />
+            <span class="rainbow-wheel pen-mini-wheel" aria-hidden="true"></span>
+            <span id="pen-custom-hex" class="tabular">Auto</span>
+          </label>
+        </div>
+        <div id="pen-palette-tabs" class="pen-palette-tabs" role="tablist" aria-label="Bộ sưu tập bảng màu"></div>
+        <div id="pen-palette-grid" class="pen-palette-grid"></div>
+      </div>
+
+      <!-- Favorite Pens Quick Strip -->
+      <div class="pen-detail-block">
+        <div class="pen-pal-label" style="margin-bottom:6px">Bút yêu thích (chọn nhanh 1 chạm)</div>
+        <div id="pen-favorites-row" class="pen-favorites-row"></div>
+      </div>
+    </div>
+
+    <!-- Samsung Notes-Style 6-Pen Floating S Pen Toolbar -->
     <div id="pen-toolbar" class="pen-toolbar glass-chrome" role="toolbar" aria-label="Thanh bút S Pen ghi chú trực tiếp">
       <div class="pen-row-top">
         <div class="pen-tools-group" role="group" aria-label="Chọn loại bút">
-          <button class="pen-tool-btn active" data-pentool="pen" type="button" title="Bút mực S Pen">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          <button class="pen-tool-btn active" data-pentool="fountain" type="button" title="Bút máy (Fountain Pen — thanh đậm theo góc ngòi & lực nhấn)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="1.6"/></svg>
           </button>
-          <button class="pen-tool-btn" data-pentool="pencil" type="button" title="Bút chì mềm">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          <button class="pen-tool-btn" data-pentool="ballpoint" type="button" title="Bút bi (Ballpoint — nét đều sắc nét)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
           </button>
-          <button class="pen-tool-btn" data-pentool="highlighter" type="button" title="Bút dạ quang">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+          <button class="pen-tool-btn" data-pentool="calligraphy" type="button" title="Bút thư pháp (Calligraphy Brush — nét cọ nghệ thuật)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>
           </button>
-          <button class="pen-tool-btn" data-pentool="eraser" type="button" title="Tẩy nét">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+          <button class="pen-tool-btn" data-pentool="pencil" type="button" title="Bút chì (Graphite Pencil — vân than mềm)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
           </button>
-        </div>
-
-        <div class="pen-sizes-group" role="group" aria-label="Độ dày nét">
-          <button class="pen-size-btn" data-pensize="1.8" type="button" title="Nét mảnh" aria-label="Nét mảnh"><span style="width:5px;height:5px"></span></button>
-          <button class="pen-size-btn active" data-pensize="2.6" type="button" title="Nét vừa" aria-label="Nét vừa"><span style="width:8px;height:8px"></span></button>
-          <button class="pen-size-btn" data-pensize="4.6" type="button" title="Nét đậm" aria-label="Nét đậm"><span style="width:12px;height:12px"></span></button>
+          <button class="pen-tool-btn" data-pentool="highlighter" type="button" title="Bút dạ quang (Chisel Highlighter — hỗ trợ kẻ thẳng)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+          </button>
+          <button class="pen-tool-btn" data-pentool="eraser" type="button" title="Tẩy (Tẩy theo nét / Tẩy vùng)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+          </button>
         </div>
 
         <div class="pen-actions-group">
@@ -422,15 +503,14 @@
       </div>
 
       <div class="pen-row-bottom">
-        <div class="pen-colors-group" role="group" aria-label="Chọn màu mực">
-          <button class="pen-color-dot active" data-pencolor="auto" style="background:linear-gradient(135deg,#1d1d1f 50%,#e4dfd5 50%)" title="Mực tự động sáng/tối" aria-label="Mực tự động" type="button"></button>
-          <button class="pen-color-dot" data-pencolor="#D93829" style="background:#D93829" title="Đỏ chấm bài" aria-label="Màu đỏ" type="button"></button>
-          <button class="pen-color-dot" data-pencolor="#0066CC" style="background:#0066CC" title="Xanh bút bi" aria-label="Màu xanh dương" type="button"></button>
-          <button class="pen-color-dot" data-pencolor="#2D8A4E" style="background:#2D8A4E" title="Xanh lá" aria-label="Màu xanh lá" type="button"></button>
-          <button class="pen-color-dot" data-pencolor="#F2B705" style="background:#F2B705" title="Vàng dạ quang" aria-label="Màu vàng" type="button"></button>
-        </div>
+        <div id="pen-quick-colors" class="pen-colors-group" role="group" aria-label="Chọn nhanh màu mực"></div>
 
         <div class="pen-right-pills">
+          <button class="pen-chip-btn pen-expand-btn" id="pen-expand-btn" type="button" title="Mở bảng chọn nét & gợi ý bảng màu Samsung Notes">
+            <span id="pen-expand-dot" class="pen-expand-dot"></span>
+            <span id="pen-expand-val" class="tabular">2.4</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
           <button class="pen-chip-btn" id="pen-spen-only-btn" type="button" aria-pressed="false" title="Chỉ nhận bút S Pen, ngón tay vẫn lật trang không bị lem">Chỉ S Pen</button>
           <button class="pen-chip-btn primary" id="pen-done-btn" type="button">Xong</button>
         </div>
@@ -507,7 +587,7 @@
         </label>
         <button class="inset-action-row" id="more-connect-btn" type="button">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="3"/><line x1="10.5" y1="18.25" x2="13.5" y2="18.25"/></svg>
-          <div><strong>Mở &amp; Cài app lên S25 Ultra</strong><span>Mã QR &amp; hướng dẫn chạy Offline</span></div>
+          <div><strong>Đồng bộ PC / Cloud &amp; S25 Ultra</strong><span>Kho EPUB Online, tiến độ đọc, ghi chú S Pen &amp; mã QR</span></div>
         </button>
         <button class="inset-action-row" id="more-vocab-btn" type="button">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5l2.85 5.77 6.37.93-4.61 4.5 1.09 6.35L12 17.05l-5.7 3 1.09-6.35-4.61-4.5 6.37-.93L12 2.5Z"/></svg>
@@ -515,7 +595,7 @@
         </button>
         <button class="inset-action-row" id="more-import-btn" type="button">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          <div><strong>Nhập thêm file EPUB từ máy</strong><span>Lưu trực tiếp vào bộ nhớ Offline</span></div>
+          <div><strong>Tải lên file EPUB (Online / Offline)</strong><span>Tự động lên mục Online khi nối PC để đỡ tốn dung lượng máy</span></div>
         </button>
         <button class="inset-action-row" id="more-backup-export-btn" type="button">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -969,27 +1049,50 @@
     <div id="vocab-list" class="sheet-content vocab-list"></div>
   </div>
 
-  <!-- ==================== CONNECT S25 ULTRA & PWA MODAL ==================== -->
+  <!-- ==================== SYNC PC & CONNECT S25 ULTRA MODAL ==================== -->
   <div id="connect-backdrop" class="sheet-backdrop"></div>
   <div id="connect-modal" class="modal-panel large-modal" role="dialog" aria-modal="true" aria-labelledby="connect-modal-title">
     <div class="sheet-header">
-      <h2 id="connect-modal-title">Mở &amp; Cài lên Samsung S25 Ultra</h2>
-      <button class="sheet-close-circle" id="connect-close-btn" type="button" aria-label="Đóng hướng dẫn kết nối">
+      <h2 id="connect-modal-title">Đồng bộ PC &amp; S25 Ultra</h2>
+      <button class="sheet-close-circle" id="connect-close-btn" type="button" aria-label="Đóng bảng đồng bộ">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
     <div class="sheet-content connect-content">
-      <!-- Native Android App PC Server Config (shown inside APK) -->
-      <div id="native-server-card" class="inset-section hidden">
-        <div class="inset-section-label">Kết nối kho sách PC qua Wi-Fi</div>
+      <!-- PC Server Sync Card (Always accessible for Online EPUBs + Live Progress & S Pen Notes Sync!) -->
+      <div id="native-server-card" class="inset-section">
+        <div class="inset-section-label">Đồng bộ kho EPUB máy tính (Mục Online)</div>
         <div class="inset-group">
           <div class="inset-row stack-item">
-            <label for="native-server-url-input" class="mini-label">Địa chỉ máy chủ PaperInk trên PC</label>
+            <div class="sync-status-row">
+              <span id="sync-status-badge" class="sync-status-pill">Đang kiểm tra kết nối PC…</span>
+              <button class="apple-pill-btn secondary small" id="sync-now-btn" type="button">Đồng bộ ngay</button>
+            </div>
+            <label for="native-server-url-input" class="mini-label" style="margin-top:10px">Địa chỉ máy chủ PaperInk trên PC (LAN hoặc HTTPS Tunnel)</label>
             <div class="native-server-row">
-              <input id="native-server-url-input" type="url" placeholder="http://10.123.131.169:3000" />
+              <input id="native-server-url-input" class="apple-text-input" type="url" placeholder="http://localhost:3000 hoặc http://192.168.x.x:3000" />
               <button class="apple-pill-btn small" id="native-server-save-btn" type="button">Kết nối</button>
             </div>
-            <p class="setting-hint">Khi bật PC cùng Wi-Fi, app sẽ tự đồng bộ 344 cuốn sách, tiến độ, đánh giá và nét viết S Pen. Ra ngoài không có Wi-Fi vẫn đọc toàn bộ sách đã lưu Offline hoặc nhập trực tiếp file .epub trên S25 Ultra.</p>
+            <p class="setting-hint">Chạy <code>start-paperink.bat</code> trên máy tính: toàn bộ sách EPUB trong thư mục PC và file EPUB bạn tải lên sẽ nằm gọn trong mục <strong>Online</strong> (đọc trực tuyến không tốn bộ nhớ), đồng thời tự động đồng bộ 2 chiều <strong>tiến độ đọc, highlight, đánh giá &amp; nét viết S Pen</strong>.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Optional Cloud Sync via GitHub Private Gist (24/7 Progress & Notes Sync even when PC is off!) -->
+      <div id="cloud-sync-card" class="inset-section">
+        <div class="inset-section-label">Đồng bộ Đám mây 24/7 (Tiến độ &amp; Ghi chú S Pen qua GitHub Gist riêng tư)</div>
+        <div class="inset-group">
+          <div class="inset-row stack-item">
+            <div class="sync-status-row">
+              <span id="cloud-sync-status" class="sync-status-pill">Chưa kích hoạt Cloud Sync</span>
+              <button class="apple-pill-btn secondary small hidden" id="cloud-sync-clear-btn" type="button">Gỡ kết nối</button>
+            </div>
+            <label for="cloud-gist-token-input" class="mini-label" style="margin-top:10px">GitHub Personal Access Token (chỉ cần quyền <code>gist</code>)</label>
+            <div class="native-server-row">
+              <input id="cloud-gist-token-input" class="apple-text-input" type="password" placeholder="ghp_... (lưu cục bộ chỉ trên máy bạn)" autocomplete="off" />
+              <button class="apple-pill-btn small" id="cloud-sync-save-btn" type="button">Lưu &amp; Đồng bộ</button>
+            </div>
+            <p class="setting-hint">Tùy chọn: Dán cùng 1 Token trên PC và S25 Ultra để đồng bộ tự động tiến độ đọc, highlight, sổ từ vựng và nét viết tay S Pen mọi lúc mọi nơi ngay cả khi tắt máy tính.</p>
           </div>
         </div>
       </div>
