@@ -1137,10 +1137,97 @@ html[data-theme='amoled'] #warmth-overlay {
   box-shadow: inset -1px 0 1px rgba(0, 0, 0, 0.18);
 }
 
-/* Whisper-subtle corner indicator (NO ugly big white circles!) */
-.cover-corner-btn {
+/* Top-Right Hover 3-Dot Book Info Button (Material Design 3 Scrim Icon Button) */
+.cover-more-btn {
   position: absolute;
   top: 6px;
+  right: 6px;
+  z-index: 6;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(19, 19, 20, 0.74);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transform: scale(0.86);
+  pointer-events: none;
+  transition: opacity 170ms ease, transform 180ms var(--ease-apple), background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.shelf-book:hover .cover-more-btn,
+.shelf-book:focus-within .cover-more-btn,
+.book-card:hover .cover-more-btn,
+.book-card:focus-within .cover-more-btn,
+.cover-more-btn:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.cover-more-btn:hover {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  border-color: transparent;
+  transform: scale(1.08);
+}
+
+.cover-more-btn:active {
+  transform: scale(0.94);
+}
+
+/* On pure touchscreens without hover, keep 3-dot button subtly tappable */
+@media (hover: none) {
+  .cover-more-btn {
+    opacity: 0.78;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+}
+
+.library-view.select-books-mode .cover-more-btn,
+.library-view.edit-stickers-mode .cover-more-btn {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.book-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.book-row-more-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.book-row-more-btn:hover {
+  background: var(--md-surface-container-high);
+  color: var(--ink);
+}
+
+/* Whisper-subtle bottom-right Offline indicator (clear of top-right 3-dot button!) */
+.cover-corner-btn {
+  position: absolute;
+  bottom: 9px;
   right: 6px;
   z-index: 4;
   width: 24px;
@@ -1155,8 +1242,8 @@ html[data-theme='amoled'] #warmth-overlay {
 }
 
 .cover-corner-btn.saved {
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
   background: rgba(20, 20, 22, 0.62);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);

@@ -103,6 +103,7 @@
     starFilled: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
     starOutline: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
     info: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+    moreVert: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18.5" r="2"/></svg>`,
     pen: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
     folder: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
   };
@@ -1962,6 +1963,7 @@
 
       const isSel = this.selectedBookIds.has(book.id);
       const selectBadge = `<span class="book-select-badge" aria-hidden="true">${ICONS.check}</span>`;
+      const moreInfoBtn = `<button class="cover-more-btn" data-open-book-info="${escHtml(book.id)}" type="button" title="Xem thông tin sách" aria-label="Xem thông tin sách ${escHtml(book.title)}">${ICONS.moreVert}</button>`;
 
       return `
         <article class="shelf-book ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
@@ -1969,6 +1971,7 @@
             <div class="shelf-book-cover">
               ${this.renderCoverMarkup(book)}
               ${idxBadge}
+              ${moreInfoBtn}
               ${offlineIndicator}
               ${selectBadge}
               ${pct > 0 ? `<div class="cover-progress"><div style="width:${pct}%"></div></div>` : ''}
@@ -1997,12 +2000,14 @@
 
       const isSel = this.selectedBookIds.has(book.id);
       const selectBadge = `<span class="book-select-badge" aria-hidden="true">${ICONS.check}</span>`;
+      const moreInfoBtn = `<button class="cover-more-btn" data-open-book-info="${escHtml(book.id)}" type="button" title="Xem thông tin sách" aria-label="Xem thông tin sách ${escHtml(book.title)}">${ICONS.moreVert}</button>`;
 
       return `
         <article class="book-card ${isSel ? 'selected' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
           <div class="book-cover-wrap">
             ${this.renderCoverMarkup(book)}
             ${idxBadge}
+            ${moreInfoBtn}
             ${offlineIndicator}
             ${selectBadge}
             ${pct > 0 ? `<div class="cover-progress"><div style="width:${pct}%"></div></div>` : ''}
@@ -2038,9 +2043,14 @@
               <span class="tabular">${formatBytes(book.size)}</span>
             </div>
           </div>
-          <button class="book-offline-btn ${book.isOffline ? 'saved' : ''} ${isDl ? 'loading' : ''}" data-toggle-offline="${escHtml(book.id)}" type="button" title="${offlineBtnTitle}" aria-label="${offlineBtnTitle}" ${isDl ? 'disabled' : ''}>
-            ${offlineIcon}
-          </button>
+          <div class="book-row-actions">
+            <button class="book-row-more-btn" data-open-book-info="${escHtml(book.id)}" type="button" title="Xem thông tin sách" aria-label="Xem thông tin sách ${escHtml(book.title)}">
+              ${ICONS.moreVert}
+            </button>
+            <button class="book-offline-btn ${book.isOffline ? 'saved' : ''} ${isDl ? 'loading' : ''}" data-toggle-offline="${escHtml(book.id)}" type="button" title="${offlineBtnTitle}" aria-label="${offlineBtnTitle}" ${isDl ? 'disabled' : ''}>
+              ${offlineIcon}
+            </button>
+          </div>
         </article>
       `;
     }
