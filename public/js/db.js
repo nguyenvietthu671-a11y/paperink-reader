@@ -88,6 +88,7 @@
             series: v.series || '',
             seriesIndex: v.seriesIndex ?? null,
             genres: Array.isArray(v.genres) && v.genres.length ? v.genres : [],
+            tags: Array.isArray(v.tags) ? v.tags : [],
             description: v.description || '',
             language: v.language || 'en',
             fileName: v.fileName || '',

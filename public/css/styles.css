@@ -4078,6 +4078,22 @@ html[data-theme='amoled'] .ink-canvas {
   color: var(--accent);
 }
 
+.book-info-link {
+  display: block;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.16s ease, opacity 0.16s ease;
+}
+
+.book-info-link:hover {
+  color: var(--md-primary, var(--accent));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .book-info-status-row {
   margin-top: 8px;
   display: flex;
@@ -4094,13 +4110,110 @@ html[data-theme='amoled'] .ink-canvas {
 }
 
 .genre-chip {
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  font-size: 0.7rem;
+  padding: 3px 10px;
+  border-radius: 8px;
+  background: var(--md-surface-container-high, var(--surface));
+  border: 1px solid var(--md-outline-variant, var(--border));
+  font-size: 0.71rem;
   font-weight: 500;
   color: var(--ink-muted);
+}
+
+.genre-chip-btn {
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.genre-chip-btn:hover {
+  background: var(--md-primary-container, var(--accent-soft));
+  border-color: transparent;
+  color: var(--md-on-primary-container, var(--accent));
+}
+
+.book-info-tags {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tag-chip {
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: none;
+  background: var(--md-secondary-container, rgba(11, 87, 208, 0.1));
+  color: var(--md-on-secondary-container, var(--accent));
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: filter 0.16s ease, transform 0.14s ease;
+}
+
+.tag-chip:hover {
+  filter: brightness(0.95);
+  transform: translateY(-1px);
+}
+
+.book-meta-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.book-meta-actions .apple-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meta-edit-panel {
+  margin-bottom: 14px;
+}
+
+.meta-edit-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.meta-edit-series-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.meta-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.meta-edit-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.meta-edit-input {
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--md-outline-variant, var(--border));
+  background: var(--md-surface-container-lowest, var(--bg));
+  color: var(--ink);
+  font-size: 0.84rem;
+  outline: none;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.meta-edit-input:focus {
+  border-color: var(--md-primary, var(--accent));
+  box-shadow: 0 0 0 2px rgba(11, 87, 208, 0.16);
 }
 
 .book-info-prog-bar {

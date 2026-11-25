@@ -106,6 +106,8 @@
     moreVert: `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5.5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="18.5" r="2"/></svg>`,
     pen: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`,
     folder: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+    sparkles: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.3L19 10.2l-5.1 1.9L12 17.4l-1.9-5.3L5 10.2l5.1-1.9L12 3z"/><path d="M19 3l.8 2.2L22 6l-2.2.8L19 9l-.8-2.2L16 6l2.2-.8L19 3z"/></svg>`,
+    tag: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`,
   };
 
   function escHtml(s) {
@@ -185,12 +187,15 @@
       this.isOnlineToServer = false;
       this.deferredInstallPrompt = null;
       this.activeBookInfoId = null;
+      this.enrichingBookIds = new Set();
+      this.knownServerBookIds = null;
 
       this.state = {
         progress: {},
         bookmarks: {},
         highlights: {},
         bookReviews: {},
+        bookMetaOverrides: {},
         inkNotes: {},
         folders: [],
         hiddenBookIds: {},
@@ -370,6 +375,7 @@
             bookmarks: savedState.bookmarks || {},
             highlights: savedState.highlights || {},
             bookReviews: savedState.bookReviews || {},
+            bookMetaOverrides: savedState.bookMetaOverrides || {},
             inkNotes: savedState.inkNotes || {},
             folders: Array.isArray(savedState.folders) ? savedState.folders : [],
             hiddenBookIds: savedState.hiddenBookIds || {},
@@ -616,6 +622,17 @@
           const cur = this.state.bookReviews[bookId];
           if (!cur || (rev.updatedAt || 0) >= (cur.updatedAt || 0)) {
             this.state.bookReviews[bookId] = rev;
+          }
+        }
+      }
+
+      if (incoming.bookMetaOverrides && typeof incoming.bookMetaOverrides === 'object') {
+        if (!this.state.bookMetaOverrides) this.state.bookMetaOverrides = {};
+        for (const [bookId, meta] of Object.entries(incoming.bookMetaOverrides)) {
+          if (!meta || typeof meta !== 'object') continue;
+          const cur = this.state.bookMetaOverrides[bookId];
+          if (!cur || (meta.updatedAt || 0) >= (cur.updatedAt || 0)) {
+            this.state.bookMetaOverrides[bookId] = meta;
           }
         }
       }
@@ -876,8 +893,18 @@
           if (libRes.ok) {
             const libData = await libRes.json();
             if (Array.isArray(libData.books)) {
+              const prevIds = this.knownServerBookIds;
               this.serverBooks = libData.books;
+              this.knownServerBookIds = new Set(libData.books.map((b) => b.id));
               window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+              if (prevIds && prevIds.size > 0) {
+                const newlyDetected = libData.books.filter(
+                  (b) => !prevIds.has(b.id) && !this.state.bookMetaOverrides?.[b.id]
+                );
+                if (newlyDetected.length > 0 && newlyDetected.length <= 10) {
+                  this.autoEnrichNewBooks(newlyDetected, { silent: true });
+                }
+              }
             }
             this.isOnlineToServer = true;
           } else {
@@ -1478,47 +1505,100 @@
     }
 
     // ---- Merged Book Data ----
+    applyMetaOverrideToBook(book) {
+      const ov = this.state.bookMetaOverrides?.[book.id];
+      const merged = { ...book };
+      if (ov && typeof ov === 'object') {
+        if (typeof ov.author === 'string' && ov.author.trim()) merged.author = ov.author.trim();
+        if (typeof ov.series === 'string') merged.series = ov.series.trim();
+        if (ov.seriesIndex !== undefined) merged.seriesIndex = ov.seriesIndex;
+        if (Array.isArray(ov.genres) && ov.genres.length) merged.genres = ov.genres;
+        if (Array.isArray(ov.tags)) merged.tags = ov.tags;
+        if (typeof ov.description === 'string' && ov.description.trim()) merged.description = ov.description.trim();
+        merged.autoTaggedAt = ov.updatedAt || 0;
+      }
+      if (!Array.isArray(merged.tags) || merged.tags.length === 0) {
+        const metaMod = window.PaperInkMetadata;
+        if (metaMod && typeof metaMod.analyzeBookMetadata === 'function') {
+          const inferred = metaMod.analyzeBookMetadata({
+            title: merged.title,
+            author: merged.author,
+            fileName: merged.fileName,
+            description: merged.description,
+            series: merged.series,
+            seriesIndex: merged.seriesIndex,
+            subjects: merged.genres,
+            language: merged.language,
+            size: merged.size,
+          });
+          if (!merged.author || /^unknown/i.test(merged.author)) merged.author = inferred.author;
+          if (!merged.series && inferred.series) {
+            merged.series = inferred.series;
+            merged.seriesIndex = merged.seriesIndex ?? inferred.seriesIndex;
+          }
+          if (!Array.isArray(merged.genres) || !merged.genres.length || (merged.genres.length === 1 && merged.genres[0] === 'General Fiction')) {
+            merged.genres = inferred.genres;
+          }
+          merged.tags = inferred.tags;
+        } else {
+          merged.tags = [];
+        }
+      }
+      if (!Array.isArray(merged.genres) || !merged.genres.length) {
+        merged.genres = ['General Fiction'];
+      }
+      return merged;
+    }
+
     getMergedBooks() {
       const map = new Map();
       for (const b of this.serverBooks) {
         const isOff = this.offlineMap.has(b.id);
         const offCover = this.offlineCoverUrls.get(b.id);
-        map.set(b.id, {
-          ...b,
-          description: b.description || '',
-          genres: Array.isArray(b.genres) && b.genres.length ? b.genres : ['General Fiction'],
-          series: b.series || '',
-          seriesIndex: b.seriesIndex ?? null,
-          isOnline: true,
-          isOffline: isOff,
-          coverDisplayUrl: offCover || this.resolveServerAssetUrl(b.coverUrl),
-          progress: this.state.progress[b.id] || null,
-          review: this.state.bookReviews?.[b.id] || null,
-        });
+        map.set(
+          b.id,
+          this.applyMetaOverrideToBook({
+            ...b,
+            description: b.description || '',
+            genres: Array.isArray(b.genres) && b.genres.length ? b.genres : ['General Fiction'],
+            tags: Array.isArray(b.tags) ? b.tags : [],
+            series: b.series || '',
+            seriesIndex: b.seriesIndex ?? null,
+            isOnline: true,
+            isOffline: isOff,
+            coverDisplayUrl: offCover || this.resolveServerAssetUrl(b.coverUrl),
+            progress: this.state.progress[b.id] || null,
+            review: this.state.bookReviews?.[b.id] || null,
+          })
+        );
       }
       for (const [id, off] of this.offlineMap.entries()) {
         if (!map.has(id)) {
-          map.set(id, {
-            id: off.id,
-            title: off.title,
-            author: off.author,
-            series: off.series || '',
-            seriesIndex: off.seriesIndex ?? null,
-            genres: Array.isArray(off.genres) && off.genres.length ? off.genres : ['General Fiction'],
-            language: off.language || 'en',
-            fileName: off.fileName || '',
-            size: off.size || 0,
-            mtimeMs: off.savedAt || 0,
-            hasCover: Boolean(off.hasCoverBlob),
-            isOnline: false,
-            isOffline: true,
-            isLocalImport: Boolean(off.isLocalImport),
-            isDemoSample: Boolean(off.isDemoSample),
-            coverDisplayUrl: this.offlineCoverUrls.get(id) || null,
-            description: off.description || '',
-            progress: this.state.progress[id] || null,
-            review: this.state.bookReviews?.[id] || null,
-          });
+          map.set(
+            id,
+            this.applyMetaOverrideToBook({
+              id: off.id,
+              title: off.title,
+              author: off.author,
+              series: off.series || '',
+              seriesIndex: off.seriesIndex ?? null,
+              genres: Array.isArray(off.genres) && off.genres.length ? off.genres : ['General Fiction'],
+              tags: Array.isArray(off.tags) ? off.tags : [],
+              language: off.language || 'en',
+              fileName: off.fileName || '',
+              size: off.size || 0,
+              mtimeMs: off.savedAt || 0,
+              hasCover: Boolean(off.hasCoverBlob),
+              isOnline: false,
+              isOffline: true,
+              isLocalImport: Boolean(off.isLocalImport),
+              isDemoSample: Boolean(off.isDemoSample),
+              coverDisplayUrl: this.offlineCoverUrls.get(id) || null,
+              description: off.description || '',
+              progress: this.state.progress[id] || null,
+              review: this.state.bookReviews?.[id] || null,
+            })
+          );
         }
       }
       const hidden = this.state.hiddenBookIds || {};
@@ -2091,12 +2171,14 @@
 
       if (this.searchQuery) {
         const q = this.searchQuery.toLowerCase();
+        const qTag = q.replace(/^#/, '');
         filtered = filtered.filter(
           (b) =>
             (b.title || '').toLowerCase().includes(q) ||
             (b.author || '').toLowerCase().includes(q) ||
             (b.series || '').toLowerCase().includes(q) ||
-            (b.genres || []).some((g) => g.toLowerCase().includes(q)) ||
+            (b.genres || []).some((g) => g.toLowerCase().includes(qTag)) ||
+            (b.tags || []).some((t) => t.toLowerCase().includes(qTag)) ||
             (b.fileName || '').toLowerCase().includes(q)
         );
       }
@@ -3216,6 +3298,7 @@
           series: book.series || '',
           seriesIndex: book.seriesIndex ?? null,
           genres: Array.isArray(book.genres) ? book.genres : [],
+          tags: Array.isArray(book.tags) ? book.tags : [],
           description: book.description || '',
           language: book.language || 'en',
           fileName: book.fileName || '',
@@ -3291,6 +3374,7 @@
               series: book.series || '',
               seriesIndex: book.seriesIndex ?? null,
               genres: Array.isArray(book.genres) ? book.genres : [],
+              tags: Array.isArray(book.tags) ? book.tags : [],
               description: book.description || '',
               language: book.language || 'en',
               fileName: book.fileName || '',
@@ -3328,9 +3412,10 @@
 
       // When connected to PC Server: upload EPUBs straight into PC Online library pool (no heavy phone storage!)
       if (this.isOnlineToServer) {
-        this.toast(`Đang tải ${validFiles.length} cuốn lên mục Online…`);
+        this.toast(`Đang tải ${validFiles.length} cuốn lên mục Online & tự động gắn nhãn…`);
         let uploaded = 0;
         let lastBooks = null;
+        const uploadedBooks = [];
         for (const file of validFiles) {
           try {
             const res = await fetch(this.apiUrl('/api/books/upload'), {
@@ -3345,8 +3430,11 @@
             const data = await res.json();
             if (data.ok) {
               uploaded++;
-              if (data.book?.id && this.state.hiddenBookIds?.[data.book.id]) {
-                delete this.state.hiddenBookIds[data.book.id];
+              if (data.book?.id) {
+                uploadedBooks.push(data.book);
+                if (this.state.hiddenBookIds?.[data.book.id]) {
+                  delete this.state.hiddenBookIds[data.book.id];
+                }
               }
               if (Array.isArray(data.books)) lastBooks = data.books;
             }
@@ -3357,32 +3445,38 @@
         if (uploaded > 0) {
           if (lastBooks) {
             this.serverBooks = lastBooks;
+            this.knownServerBookIds = new Set(lastBooks.map((b) => b.id));
             window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
           }
           this.scheduleSync();
           this.renderCurrentRoute();
-          this.toast(`Đã tải ${uploaded} cuốn vào mục Online (đồng bộ PC ↔ điện thoại)!`);
+          this.toast(`Đã tải ${uploaded} cuốn vào mục Online & gắn nhãn tự động!`);
+          if (uploadedBooks.length) {
+            this.autoEnrichNewBooks(uploadedBooks, { silent: false });
+          }
           return;
         }
       }
 
       // Fallback when offline / standalone web: save directly to local Offline IndexedDB
       let imported = 0;
+      const importedBooks = [];
       for (const file of validFiles) {
         try {
-          const parsed = await window.PaperInkEpub.loadFromBlob(file);
+          const parsed = await window.PaperInkEpub.loadFromBlob(file, file.name);
           const coverBlob = await parsed.getCoverBlob();
           const id = `local_${file.name.replace(/[^a-z0-9]/gi, '_').slice(0, 24)}_${file.size}`;
           if (this.state.hiddenBookIds?.[id]) {
             delete this.state.hiddenBookIds[id];
           }
-          await window.PaperInkDB.saveOfflineBook({
+          const rec = {
             id,
             title: parsed.meta.title || file.name.replace(/\.epub$/i, ''),
             author: parsed.meta.author || 'Unknown Author',
             series: parsed.meta.series || '',
             seriesIndex: parsed.meta.seriesIndex ?? null,
             genres: Array.isArray(parsed.meta.genres) ? parsed.meta.genres : [],
+            tags: Array.isArray(parsed.meta.tags) ? parsed.meta.tags : [],
             description: parsed.meta.description || '',
             language: parsed.meta.language || 'en',
             fileName: file.name,
@@ -3391,7 +3485,9 @@
             isLocalImport: true,
             coverBlob,
             epubBlob: file,
-          });
+          };
+          await window.PaperInkDB.saveOfflineBook(rec);
+          importedBooks.push(rec);
           parsed.destroy();
           imported++;
         } catch (err) {
@@ -3401,10 +3497,180 @@
       if (imported > 0) {
         await this.reloadOfflineMeta();
         this.renderCurrentRoute();
-        this.toast(`Đã thêm ${imported} cuốn EPUB vào kệ Offline!`);
+        const first = importedBooks[0];
+        const summaryBits = [];
+        if (imported === 1 && first) {
+          if (first.author && !/^unknown/i.test(first.author)) summaryBits.push(first.author);
+          if (first.series) summaryBits.push(`Bộ ${first.series}`);
+          if (first.genres?.[0]) summaryBits.push(first.genres[0]);
+        }
+        this.toast(
+          summaryBits.length
+            ? `Đã thêm & gắn nhãn: ${summaryBits.join(' · ')}`
+            : `Đã thêm ${imported} cuốn EPUB & tự động gắn nhãn!`
+        );
+        this.autoEnrichNewBooks(importedBooks, { silent: imported > 1 });
       } else {
         this.toast('Vui lòng chọn tệp .epub hợp lệ');
       }
+    }
+
+    async persistMetaOverrideToOffline(bookId, override) {
+      try {
+        const rec = await window.PaperInkDB.getOfflineBook(bookId);
+        if (!rec) return;
+        await window.PaperInkDB.saveOfflineBook({
+          ...rec,
+          author: override.author || rec.author,
+          series: override.series ?? rec.series,
+          seriesIndex: override.seriesIndex !== undefined ? override.seriesIndex : rec.seriesIndex,
+          genres: Array.isArray(override.genres) && override.genres.length ? override.genres : rec.genres,
+          tags: Array.isArray(override.tags) ? override.tags : rec.tags,
+          description: override.description || rec.description,
+        });
+        await this.reloadOfflineMeta();
+      } catch (_) {}
+    }
+
+    async autoEnrichNewBooks(books, { silent = true } = {}) {
+      const metaMod = window.PaperInkMetadata;
+      if (!metaMod || typeof metaMod.enrichBookOnline !== 'function') return;
+      if (!Array.isArray(books) || !books.length) return;
+
+      let enrichedCount = 0;
+      let lastSummary = '';
+      for (const b of books.slice(0, 10)) {
+        if (!b || !b.id || this.enrichingBookIds.has(b.id)) continue;
+        this.enrichingBookIds.add(b.id);
+        try {
+          const result = await metaMod.enrichBookOnline(b);
+          if (!result) continue;
+          const override = {
+            author: result.author || b.author || 'Unknown Author',
+            series: result.series || '',
+            seriesIndex: result.seriesIndex ?? null,
+            genres: Array.isArray(result.genres) && result.genres.length ? result.genres : ['General Fiction'],
+            tags: Array.isArray(result.tags) ? result.tags : [],
+            description: result.description || b.description || '',
+            updatedAt: Date.now(),
+          };
+          if (!this.state.bookMetaOverrides) this.state.bookMetaOverrides = {};
+          this.state.bookMetaOverrides[b.id] = override;
+          await this.persistMetaOverrideToOffline(b.id, override);
+          enrichedCount++;
+          if (books.length === 1) {
+            const parts = [];
+            if (override.author && !/^unknown/i.test(override.author)) parts.push(override.author);
+            if (override.series) {
+              parts.push(override.seriesIndex != null ? `${override.series} #${override.seriesIndex}` : override.series);
+            }
+            if (override.genres[0]) parts.push(override.genres[0]);
+            if (override.tags.length) parts.push(override.tags.slice(0, 2).map((t) => `#${t}`).join(' '));
+            lastSummary = parts.join(' · ');
+          }
+        } catch (err) {
+          console.warn('[PaperInk Auto-Tag]', err);
+        } finally {
+          this.enrichingBookIds.delete(b.id);
+        }
+      }
+
+      if (enrichedCount > 0) {
+        this.scheduleSync();
+        this.renderCurrentRoute();
+        if (this.activeBookInfoId && document.getElementById('book-info-modal')?.classList.contains('open')) {
+          this.renderBookInfoModal(this.activeBookInfoId);
+        }
+        if (!silent) {
+          this.toast(
+            lastSummary
+              ? `Đã tự động gắn nhãn: ${lastSummary}`
+              : `Đã tự động gắn nhãn (tag, thể loại, tác giả, bộ truyện) cho ${enrichedCount} cuốn!`
+          );
+        }
+      }
+    }
+
+    async autoEnrichBook(bookId, { silent = false } = {}) {
+      const book = this.getMergedBooks().find((b) => b.id === bookId);
+      const metaMod = window.PaperInkMetadata;
+      if (!book || !metaMod || this.enrichingBookIds.has(bookId)) return;
+
+      this.enrichingBookIds.add(bookId);
+      if (this.activeBookInfoId === bookId && document.getElementById('book-info-modal')?.classList.contains('open')) {
+        this.renderBookInfoModal(bookId);
+      }
+
+      try {
+        const result = await metaMod.enrichBookOnline(book);
+        const override = {
+          author: result.author || book.author || 'Unknown Author',
+          series: result.series || '',
+          seriesIndex: result.seriesIndex ?? null,
+          genres: Array.isArray(result.genres) && result.genres.length ? result.genres : ['General Fiction'],
+          tags: Array.isArray(result.tags) ? result.tags : [],
+          description: result.description || book.description || '',
+          updatedAt: Date.now(),
+        };
+        if (!this.state.bookMetaOverrides) this.state.bookMetaOverrides = {};
+        this.state.bookMetaOverrides[bookId] = override;
+        await this.persistMetaOverrideToOffline(bookId, override);
+        this.scheduleSync();
+        this.renderCurrentRoute();
+        if (!silent) {
+          const bits = [override.genres[0], override.series ? `Bộ ${override.series}` : '', ...override.tags.slice(0, 2).map((t) => `#${t}`)].filter(Boolean);
+          this.toast(
+            result.enrichedOnline
+              ? `Đã tra cứu & gắn nhãn online: ${bits.join(' · ')}`
+              : `Đã phân loại tự động: ${bits.join(' · ')}`
+          );
+        }
+      } catch (err) {
+        console.warn('[PaperInk Auto-Tag]', err);
+        if (!silent) this.toast('Không thể tra cứu online — đã giữ nhãn phân loại từ tệp EPUB');
+      } finally {
+        this.enrichingBookIds.delete(bookId);
+        if (this.activeBookInfoId === bookId && document.getElementById('book-info-modal')?.classList.contains('open')) {
+          this.renderBookInfoModal(bookId);
+        }
+      }
+    }
+
+    async saveBookMetaOverride(bookId, fields) {
+      if (!bookId || !fields) return;
+      const existing = this.getMergedBooks().find((b) => b.id === bookId);
+      const parseCsv = (val) =>
+        String(val || '')
+          .split(/[,;]+/)
+          .map((s) => s.replace(/^#+/, '').trim())
+          .filter(Boolean);
+
+      const author = String(fields.author || '').trim() || existing?.author || 'Unknown Author';
+      const series = String(fields.series || '').trim();
+      const rawIdx = String(fields.seriesIndex ?? '').trim();
+      const parsedIdx = rawIdx === '' ? null : parseFloat(rawIdx);
+      const seriesIndex = parsedIdx != null && !Number.isNaN(parsedIdx) ? parsedIdx : null;
+      const genres = parseCsv(fields.genres);
+      const tags = parseCsv(fields.tags);
+
+      const override = {
+        author,
+        series,
+        seriesIndex,
+        genres: genres.length ? genres.slice(0, 6) : ['General Fiction'],
+        tags: tags.slice(0, 10),
+        description: existing?.description || '',
+        updatedAt: Date.now(),
+      };
+      if (!this.state.bookMetaOverrides) this.state.bookMetaOverrides = {};
+      this.state.bookMetaOverrides[bookId] = override;
+      await this.persistMetaOverrideToOffline(bookId, override);
+      this.scheduleSync();
+      this.renderCurrentRoute();
+      if (this.activeBookInfoId === bookId) {
+        this.renderBookInfoModal(bookId);
+      }
+      this.toast('Đã lưu tác giả, bộ truyện, thể loại & tags!');
     }
 
     // ---- Drawers: TOC / Bookmarks / Highlights ----
@@ -3558,18 +3824,20 @@
       const pct = Math.min(100, Math.round(book.progress?.bookPercent || 0));
       const isReadingNow = this.reader.bookMeta?.id === bookId && !document.getElementById('reader-view')?.classList.contains('hidden');
       const genres = Array.isArray(book.genres) ? book.genres.slice(0, 6) : [];
+      const tags = Array.isArray(book.tags) ? book.tags.slice(0, 8) : [];
       const desc = (book.description || '').trim();
       const statusLabel = pct >= 96 ? 'Đã hoàn thành' : pct > 0 || book.progress?.updatedAt ? `Đang đọc · ${pct}%` : 'Chưa bắt đầu';
+      const isEnriching = this.enrichingBookIds.has(bookId);
 
       body.innerHTML = `
         <div class="book-info-hero">
           <div class="book-info-cover">${this.renderCoverMarkup(book)}</div>
           <div class="book-info-meta">
             <h3 class="book-info-name">${escHtml(book.title)}</h3>
-            <div class="book-info-author">${escHtml(book.author || 'Unknown Author')}</div>
+            <button class="book-info-author book-info-link" data-filter-author="${escHtml(book.author || 'Unknown Author')}" type="button" title="Xem tất cả sách của tác giả này">${escHtml(book.author || 'Unknown Author')}</button>
             ${
               book.series
-                ? `<div class="book-info-series">${escHtml(book.series)}${book.seriesIndex != null ? ` · Tập #${book.seriesIndex}` : ''}</div>`
+                ? `<button class="book-info-series book-info-link" data-filter-series="${escHtml(book.series)}" type="button" title="Xem toàn bộ bộ truyện này">${escHtml(book.series)}${book.seriesIndex != null ? ` · Tập #${book.seriesIndex}` : ''}</button>`
                 : ''
             }
             <div class="book-info-status-row">
@@ -3578,9 +3846,69 @@
             </div>
             ${
               genres.length
-                ? `<div class="book-info-genres">${genres.map((g) => `<span class="genre-chip">${escHtml(g)}</span>`).join('')}</div>`
+                ? `<div class="book-info-genres">${genres
+                    .map(
+                      (g) =>
+                        `<button class="genre-chip genre-chip-btn" data-filter-genre="${escHtml(g)}" type="button" title="Lọc theo thể loại ${escHtml(g)}">${escHtml(g)}</button>`
+                    )
+                    .join('')}</div>`
                 : ''
             }
+            ${
+              tags.length
+                ? `<div class="book-info-tags">${tags
+                    .map(
+                      (t) =>
+                        `<button class="tag-chip" data-filter-tag="${escHtml(t)}" type="button" title="Tìm sách gắn tag #${escHtml(t)}">#${escHtml(t)}</button>`
+                    )
+                    .join('')}</div>`
+                : ''
+            }
+          </div>
+        </div>
+
+        <div class="book-meta-actions">
+          <button class="apple-pill-btn secondary small" data-auto-tag-book="${escHtml(bookId)}" type="button" ${isEnriching ? 'disabled' : ''}>
+            ${isEnriching ? ICONS.spinner : ICONS.sparkles}
+            <span>${isEnriching ? 'Đang tra cứu nhãn…' : 'Tự động gắn nhãn'}</span>
+          </button>
+          <button class="apple-pill-btn secondary small" id="toggle-meta-edit-btn" type="button">
+            ${ICONS.tag}
+            <span>Chỉnh sửa nhãn</span>
+          </button>
+        </div>
+
+        <div id="book-meta-edit-panel" class="meta-edit-panel hidden">
+          <div class="inset-group">
+            <div class="inset-row stack-item">
+              <div class="meta-edit-grid">
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Tác giả (Author)</span>
+                  <input id="meta-edit-author" class="meta-edit-input" type="text" value="${escHtml(book.author || '')}" placeholder="Arthur Conan Doyle" />
+                </label>
+                <div class="meta-edit-series-row">
+                  <label class="meta-edit-field" style="flex:1">
+                    <span class="meta-edit-label">Bộ truyện (Series)</span>
+                    <input id="meta-edit-series" class="meta-edit-input" type="text" value="${escHtml(book.series || '')}" placeholder="Sherlock Holmes" />
+                  </label>
+                  <label class="meta-edit-field" style="width:88px">
+                    <span class="meta-edit-label">Tập #</span>
+                    <input id="meta-edit-series-idx" class="meta-edit-input tabular" type="number" step="0.5" min="0" value="${book.seriesIndex != null ? escHtml(String(book.seriesIndex)) : ''}" placeholder="1" />
+                  </label>
+                </div>
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Thể loại (Genres — cách nhau bằng dấu phẩy)</span>
+                  <input id="meta-edit-genres" class="meta-edit-input" type="text" value="${escHtml(genres.join(', '))}" placeholder="Mystery & Detective, Classic Literature" />
+                </label>
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Tags (cách nhau bằng dấu phẩy)</span>
+                  <input id="meta-edit-tags" class="meta-edit-input" type="text" value="${escHtml(tags.join(', '))}" placeholder="Trinh thám, Kinh điển, Tiếng Anh" />
+                </label>
+              </div>
+              <div class="book-info-actions">
+                <button class="apple-pill-btn small" data-save-meta-override="${escHtml(bookId)}" type="button">Lưu nhãn</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -3729,6 +4057,7 @@
           bookmarks: { ...this.state.bookmarks, ...(incoming.bookmarks || {}) },
           highlights: { ...this.state.highlights, ...(incoming.highlights || {}) },
           bookReviews: { ...this.state.bookReviews, ...(incoming.bookReviews || {}) },
+          bookMetaOverrides: { ...(this.state.bookMetaOverrides || {}), ...(incoming.bookMetaOverrides || {}) },
           inkNotes: { ...this.state.inkNotes, ...(incoming.inkNotes || {}) },
           folders: Array.isArray(incoming.folders) ? incoming.folders : this.state.folders || [],
           hiddenBookIds: { ...(this.state.hiddenBookIds || {}), ...(incoming.hiddenBookIds || {}) },
@@ -4417,6 +4746,76 @@
       document.getElementById('book-info-close')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-backdrop')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-body')?.addEventListener('click', (e) => {
+        const autoTagBtn = e.target.closest('[data-auto-tag-book]');
+        if (autoTagBtn) {
+          this.autoEnrichBook(autoTagBtn.dataset.autoTagBook, { silent: false });
+          return;
+        }
+        if (e.target.closest('#toggle-meta-edit-btn')) {
+          document.getElementById('book-meta-edit-panel')?.classList.toggle('hidden');
+          return;
+        }
+        const saveMetaBtn = e.target.closest('[data-save-meta-override]');
+        if (saveMetaBtn) {
+          this.saveBookMetaOverride(saveMetaBtn.dataset.saveMetaOverride, {
+            author: document.getElementById('meta-edit-author')?.value || '',
+            series: document.getElementById('meta-edit-series')?.value || '',
+            seriesIndex: document.getElementById('meta-edit-series-idx')?.value || '',
+            genres: document.getElementById('meta-edit-genres')?.value || '',
+            tags: document.getElementById('meta-edit-tags')?.value || '',
+          });
+          return;
+        }
+        const filterAuthor = e.target.closest('[data-filter-author]');
+        if (filterAuthor) {
+          const val = filterAuthor.dataset.filterAuthor;
+          this.closeAllSheets();
+          if (!document.getElementById('reader-view')?.classList.contains('hidden')) {
+            this.reader.closeBook();
+            document.getElementById('library-view')?.classList.remove('hidden');
+          }
+          this.setRoute('authors', { type: 'author', value: val, label: val });
+          return;
+        }
+        const filterSeries = e.target.closest('[data-filter-series]');
+        if (filterSeries) {
+          const val = filterSeries.dataset.filterSeries;
+          this.closeAllSheets();
+          if (!document.getElementById('reader-view')?.classList.contains('hidden')) {
+            this.reader.closeBook();
+            document.getElementById('library-view')?.classList.remove('hidden');
+          }
+          this.setRoute('series', { type: 'series', value: val, label: val });
+          return;
+        }
+        const filterGenre = e.target.closest('[data-filter-genre]');
+        if (filterGenre) {
+          const val = filterGenre.dataset.filterGenre;
+          this.closeAllSheets();
+          if (!document.getElementById('reader-view')?.classList.contains('hidden')) {
+            this.reader.closeBook();
+            document.getElementById('library-view')?.classList.remove('hidden');
+          }
+          this.setRoute('genres', { type: 'genre', value: val, label: val });
+          return;
+        }
+        const filterTag = e.target.closest('[data-filter-tag]');
+        if (filterTag) {
+          const val = filterTag.dataset.filterTag;
+          this.closeAllSheets();
+          if (!document.getElementById('reader-view')?.classList.contains('hidden')) {
+            this.reader.closeBook();
+            document.getElementById('library-view')?.classList.remove('hidden');
+          }
+          this.setRoute('shelf', null);
+          this.searchQuery = `#${val}`;
+          this.setSearchOpen(true);
+          const inp = document.getElementById('lib-search');
+          if (inp) inp.value = `#${val}`;
+          this.renderShelfPage();
+          return;
+        }
+
         const openSync = e.target.closest('[data-open-sync]');
         if (openSync) {
           this.openConnectModal();

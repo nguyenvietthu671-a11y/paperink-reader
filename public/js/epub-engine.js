@@ -69,6 +69,7 @@
         author: 'Unknown',
         language: 'en',
         genres: [],
+        tags: [],
         series: '',
         seriesIndex: null,
         description: '',
@@ -133,7 +134,7 @@
       return new Blob([ab], { type: guessMime(this.coverPath) });
     }
 
-    async parse() {
+    async parse(fileName = '', fileSize = 0) {
       let opfPath = null;
       const containerXml = await this.readText('META-INF/container.xml');
       if (containerXml) {
@@ -219,6 +220,28 @@
           const n = parseFloat(txt);
           if (!Number.isNaN(n)) this.meta.seriesIndex = n;
         }
+      }
+
+      // Run shared Smart Metadata Auto-Classifier (Author, Series, Genres & Smart Tags)
+      if (window.PaperInkMetadata?.analyzeBookMetadata) {
+        const analyzed = window.PaperInkMetadata.analyzeBookMetadata({
+          title: this.meta.title,
+          author: this.meta.author,
+          fileName,
+          description: this.meta.description,
+          series: this.meta.series,
+          seriesIndex: this.meta.seriesIndex,
+          subjects: this.meta.genres,
+          language: this.meta.language,
+          size: fileSize,
+        });
+        this.meta.title = analyzed.title;
+        this.meta.author = analyzed.author;
+        this.meta.series = analyzed.series;
+        this.meta.seriesIndex = analyzed.seriesIndex;
+        this.meta.genres = analyzed.genres;
+        this.meta.tags = analyzed.tags;
+        this.meta.language = analyzed.language;
       }
 
       // Manifest
@@ -563,10 +586,10 @@
   }
 
   window.PaperInkEpub = {
-    async loadFromBlob(blob) {
+    async loadFromBlob(blob, fileName = '') {
       const zip = await window.JSZip.loadAsync(blob);
       const book = new EpubBook(zip);
-      await book.parse();
+      await book.parse(fileName || blob?.name || '', blob?.size || 0);
       return book;
     },
   };
