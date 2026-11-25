@@ -6,7 +6,7 @@
   function resolveStrokeColor(colorToken) {
     if (colorToken === 'auto') {
       const theme = document.documentElement.getAttribute('data-theme');
-      return theme === 'amoled' ? '#E4DFD5' : '#1D1D1F';
+      return theme === 'amoled' || theme === 'dark' ? '#E4DFD5' : '#1D1D1F';
     }
     return colorToken || '#1D1D1F';
   }

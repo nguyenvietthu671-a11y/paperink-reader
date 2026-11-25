@@ -82,8 +82,13 @@
     sepia: '#EFE5D1',
     eink: '#EAEAEA',
     sage: '#E5EDE4',
+    dark: '#131314',
     amoled: '#000000',
   };
+
+  function isDarkThemeName(theme) {
+    return theme === 'dark' || theme === 'amoled';
+  }
 
   const ICONS = {
     spinner: `<svg class="spin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`,
@@ -823,12 +828,32 @@
       this.scheduleSync();
     }
 
+    toggleDarkMode(forceDark = null) {
+      const cur = this.state.settings.theme || 'apple';
+      const currentlyDark = isDarkThemeName(cur);
+      const wantDark = typeof forceDark === 'boolean' ? forceDark : !currentlyDark;
+      if (wantDark === currentlyDark) return;
+      if (wantDark) {
+        if (!currentlyDark) this.lastLightTheme = cur;
+        this.updateSettings({ theme: this.lastDarkTheme || 'dark' });
+        this.toast('Đã bật Chế độ Tối (Material Dark)');
+      } else {
+        if (currentlyDark) this.lastDarkTheme = cur;
+        this.updateSettings({ theme: this.lastLightTheme || 'apple' });
+        this.toast('Đã chuyển sang Chế độ Sáng');
+      }
+    }
+
     applySettingsToDOM() {
       const s = this.state.settings;
       const root = document.documentElement;
-      root.setAttribute('data-theme', s.theme || 'apple');
+      const themeName = s.theme || 'apple';
+      if (isDarkThemeName(themeName)) this.lastDarkTheme = themeName;
+      else this.lastLightTheme = themeName;
+
+      root.setAttribute('data-theme', themeName);
       root.classList.toggle('paper-grain-on', Boolean(s.paperGrain));
-      root.classList.toggle('grayscale-on', Boolean(s.grayscale) || s.theme === 'eink');
+      root.classList.toggle('grayscale-on', Boolean(s.grayscale) || themeName === 'eink');
 
       root.style.setProperty('--reader-font', this.resolveFontStack(s.fontFamily, false));
       root.style.setProperty('--reader-heading-font', this.resolveFontStack(s.headingFont, true));
@@ -846,8 +871,8 @@
 
       const progBg =
         s.progressColorMode === 'gradient'
-          ? `linear-gradient(90deg, ${s.progressGradStart || '#0071E3'}, ${s.progressGradEnd || '#AF52DE'})`
-          : s.progressSolidColor || '#0071E3';
+          ? `linear-gradient(90deg, ${s.progressGradStart || '#0B57D0'}, ${s.progressGradEnd || '#6750A4'})`
+          : s.progressSolidColor || '#0B57D0';
       root.style.setProperty('--reader-progress-bg', progBg);
 
       const dimOverlay = document.getElementById('extra-dim-overlay');
@@ -859,16 +884,7 @@
         warmOverlay.style.opacity = String(Math.max(0, Math.min(0.45, ((s.warmth || 0) / 100) * 0.65)));
       }
 
-      const metaTheme = document.querySelector('meta[name="theme-color"]');
-      if (metaTheme) {
-        metaTheme.setAttribute(
-          'content',
-          this.state.shelfConfig.bgMode === 'color'
-            ? this.state.shelfConfig.bgColor
-            : THEME_META_COLORS[s.theme] || '#F8F9FA'
-        );
-      }
-
+      this.applyBackgroundToDOM();
       this.syncSettingsControls();
       this.reader.applyVisualMode();
       this.inkCanvas?.redraw();
@@ -876,6 +892,8 @@
 
     applyBackgroundToDOM() {
       const cfg = this.state.shelfConfig;
+      const themeName = this.state.settings.theme || 'apple';
+      const darkActive = isDarkThemeName(themeName);
       const libView = document.getElementById('library-view');
       const wpEl = document.getElementById('library-wallpaper');
       const ambEl = document.getElementById('library-wallpaper-ambient');
@@ -884,38 +902,56 @@
 
       const useImage = cfg.bgMode === 'image' && Boolean(this.customWallpaperUrl);
       if (useImage) {
-        wpEl.style.backgroundColor = '#141416';
+        wpEl.style.backgroundColor = darkActive ? '#131314' : '#141416';
         wpEl.style.backgroundImage = `url("${this.customWallpaperUrl}")`;
         wpEl.style.backgroundSize = 'cover';
         wpEl.style.backgroundPosition = 'center';
         const blurPx = Number(cfg.bgBlur || 0);
         wpEl.style.filter = blurPx > 0 ? `blur(${blurPx}px)` : '';
         wpEl.style.transform = blurPx > 0 ? 'scale(1.06)' : '';
-        const dimPct = Number(cfg.bgDim || 0) / 100;
-        scrimEl.style.opacity = String(Math.max(0, Math.min(0.78, dimPct)));
+        const baseDim = Number(cfg.bgDim || 0) / 100;
+        const dimPct = darkActive ? Math.max(0.46, baseDim) : baseDim;
+        scrimEl.style.opacity = String(Math.max(0, Math.min(0.82, dimPct)));
         ambEl.style.opacity = '0';
-        // Treat dimmed photos (>= 25% dim) as dark surface for crisp legibility
-        libView.classList.toggle('wp-dark', dimPct >= 0.25);
+        libView.classList.toggle('wp-dark', darkActive || dimPct >= 0.25);
+        const metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) metaTheme.setAttribute('content', THEME_META_COLORS[themeName] || '#F8F9FA');
       } else {
-        const hex = cfg.bgColor || '#F8F9FA';
+        const savedHex = cfg.bgColor || '#F8F9FA';
+        const savedIsDark = hexLuminance(savedHex) < 0.28;
+        // When global Dark/AMOLED mode is ON and saved wallpaper is light, smoothly show M3 Dark surface without erasing saved light hex!
+        const effectiveHex =
+          darkActive && !savedIsDark ? (themeName === 'amoled' ? '#000000' : '#131314') : savedHex;
         wpEl.style.backgroundImage = 'none';
-        wpEl.style.backgroundColor = hex;
+        wpEl.style.backgroundColor = effectiveHex;
         wpEl.style.filter = '';
         wpEl.style.transform = '';
         scrimEl.style.opacity = '0';
-        const isDark = hexLuminance(hex) < 0.28;
+        const isDark = darkActive || hexLuminance(effectiveHex) < 0.28;
         libView.classList.toggle('wp-dark', isDark);
         ambEl.style.opacity = cfg.bgAmbient !== false ? '1' : '0';
         const metaTheme = document.querySelector('meta[name="theme-color"]');
-        if (metaTheme) metaTheme.setAttribute('content', hex);
+        if (metaTheme) metaTheme.setAttribute('content', effectiveHex);
       }
     }
 
     syncSettingsControls() {
       const s = this.state.settings;
+      const darkActive = isDarkThemeName(s.theme);
       document.querySelectorAll('.theme-swatch').forEach((el) => {
         el.classList.toggle('active', el.dataset.theme === s.theme);
       });
+
+      const darkToggleBtn = document.getElementById('lib-dark-toggle');
+      if (darkToggleBtn) {
+        darkToggleBtn.setAttribute('aria-pressed', String(darkActive));
+        darkToggleBtn.title = darkActive ? 'Chuyển sang chế độ Sáng' : 'Bật chế độ Tối (Dark Mode)';
+        darkToggleBtn.classList.toggle('active', darkActive);
+      }
+      document.getElementById('dark-icon-moon')?.classList.toggle('hidden', darkActive);
+      document.getElementById('dark-icon-sun')?.classList.toggle('hidden', !darkActive);
+      const moreDarkChk = document.getElementById('more-dark-mode-switch');
+      if (moreDarkChk) moreDarkChk.checked = darkActive;
 
       // Custom Uploaded Fonts Chips
       const customRow = document.getElementById('custom-fonts-row');
@@ -3399,6 +3435,10 @@
       });
       document.getElementById('search-clear-btn')?.addEventListener('click', () => {
         this.setSearchOpen(false);
+      });
+      document.getElementById('lib-dark-toggle')?.addEventListener('click', () => this.toggleDarkMode());
+      document.getElementById('more-dark-mode-switch')?.addEventListener('change', (e) => {
+        this.toggleDarkMode(Boolean(e.target.checked));
       });
       document.getElementById('lib-studio-btn')?.addEventListener('click', () => this.openStudioSheet());
       document.getElementById('lib-more-btn')?.addEventListener('click', () => this.openMoreSheet());
