@@ -1712,6 +1712,100 @@
       this.toast(`Đã chọn phông chữ mô tả & tác giả: ${metaObj?.label || valid}`);
     }
 
+    getDescHeight(targetKey) {
+      const isMobile = window.innerWidth < 640;
+      const fallbackMap = {
+        series: isMobile ? 110 : 135,
+        book: isMobile ? 175 : 200,
+        'series-modal': isMobile ? 175 : 200,
+      };
+      const val = this.state.descHeights?.[targetKey];
+      return typeof val === 'number' && val >= 55 && val <= 500 ? val : fallbackMap[targetKey] || 150;
+    }
+
+    setDescHeight(targetKey, height) {
+      if (!this.state.descHeights) this.state.descHeights = {};
+      this.state.descHeights[targetKey] = height;
+      this.scheduleSync();
+    }
+
+    toggleDescCollapse(targetKey) {
+      if (!this.state.descCollapsed) this.state.descCollapsed = {};
+      this.state.descCollapsed[targetKey] = !this.state.descCollapsed[targetKey];
+      const isCollapsed = Boolean(this.state.descCollapsed[targetKey]);
+      this.scheduleSync();
+      if (targetKey === 'series') {
+        const box = document.getElementById('series-shelf-overview');
+        if (box) box.classList.toggle('collapsed', isCollapsed);
+        const btn = document.querySelector('[data-toggle-series-overview-collapse]');
+        if (btn) {
+          btn.textContent = isCollapsed ? 'Mở rộng' : 'Thu nhỏ';
+          btn.title = isCollapsed ? 'Mở rộng mô tả bộ truyện' : 'Thu nhỏ mô tả bộ truyện';
+        }
+      } else {
+        const sec = document.querySelector(`[data-desc-section="${targetKey}"]`);
+        if (sec) sec.classList.toggle('collapsed', isCollapsed);
+        const btn = document.querySelector(`[data-toggle-desc-collapse="${targetKey}"]`);
+        if (btn) {
+          btn.textContent = isCollapsed ? 'Mở rộng' : 'Thu nhỏ';
+          btn.title = isCollapsed ? 'Mở rộng mô tả' : 'Thu nhỏ mô tả';
+        }
+      }
+    }
+
+    initDescResizeDrag(handleEl, scrollEl, targetKey, minH = 65, maxH = 460) {
+      if (!handleEl || !scrollEl) return;
+      handleEl.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.desc-size-chip')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          handleEl.setPointerCapture?.(e.pointerId);
+        } catch (_) {}
+        handleEl.classList.add('resizing');
+        const startY = e.clientY;
+        const startH = scrollEl.getBoundingClientRect().height;
+
+        const onMove = (ev) => {
+          const dy = ev.clientY - startY;
+          const nextH = Math.max(minH, Math.min(maxH, Math.round(startH + dy)));
+          scrollEl.style.height = `${nextH}px`;
+          scrollEl.style.maxHeight = `${nextH}px`;
+        };
+
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+          handleEl.removeEventListener('pointermove', onMove);
+          handleEl.removeEventListener('pointerup', onUp);
+          handleEl.removeEventListener('pointercancel', onUp);
+          handleEl.classList.remove('resizing');
+          const finalH = Math.max(minH, Math.min(maxH, Math.round(scrollEl.getBoundingClientRect().height)));
+          this.setDescHeight(targetKey, finalH);
+
+          const presets = handleEl.querySelectorAll('.desc-size-chip');
+          presets.forEach((p) => p.classList.remove('active'));
+          if (targetKey === 'series') {
+            if (finalH <= 95) handleEl.querySelector('[data-set-desc-size="compact"]')?.classList.add('active');
+            else if (finalH > 180) handleEl.querySelector('[data-set-desc-size="large"]')?.classList.add('active');
+            else handleEl.querySelector('[data-set-desc-size="normal"]')?.classList.add('active');
+          } else {
+            if (finalH <= 125) handleEl.querySelector('[data-set-desc-size="compact"]')?.classList.add('active');
+            else if (finalH > 240) handleEl.querySelector('[data-set-desc-size="large"]')?.classList.add('active');
+            else handleEl.querySelector('[data-set-desc-size="normal"]')?.classList.add('active');
+          }
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onUp);
+        handleEl.addEventListener('pointermove', onMove);
+        handleEl.addEventListener('pointerup', onUp);
+        handleEl.addEventListener('pointercancel', onUp);
+      });
+    }
+
     applyBackgroundToDOM() {
       const resolved = this.resolveViewWallpaper(true);
       const viewActual = this.resolveViewWallpaper(false);
@@ -2852,8 +2946,10 @@
 
       const profile = this.getSeriesProfile(seriesName, scopedBooks);
       const desc = (profile.description || '').trim();
-      const isExpanded = this.expandedSeriesOverviewKey === key;
-      const isLong = desc.length > 260 || desc.includes('\n');
+      const isCollapsed = Boolean(this.state.descCollapsed?.series);
+      const currentH = this.getDescHeight('series');
+      box.classList.toggle('collapsed', isCollapsed);
+
       const genresHtml = (profile.genres || [])
         .slice(0, 3)
         .map((g) => `<span class="col-genre-mini">${escHtml(g)}</span>`)
@@ -2875,17 +2971,36 @@
                 ${this.renderMetaFontOptions()}
               </select>
             </div>
+            <button class="series-overview-toggle-btn" data-toggle-series-overview-collapse type="button" title="${isCollapsed ? 'Mở rộng mô tả bộ truyện' : 'Thu nhỏ mô tả bộ truyện'}">
+              ${isCollapsed ? 'Mở rộng' : 'Thu nhỏ'}
+            </button>
           </div>
           <button class="inline-series-info-link" data-open-series-info="${escHtml(seriesName)}" type="button">Chi tiết &amp; Sửa bộ truyện</button>
         </div>
         ${
           desc
-            ? `<div class="series-overview-scroll">
+            ? `<div class="series-overview-scroll" style="height:${currentH}px; max-height:${currentH}px;">
                  <p class="series-overview-text">${escHtml(desc)}</p>
+               </div>
+               <div class="desc-resize-bar" data-resize-desc="series" title="Kéo để chỉnh độ cao (hoặc chọn kích cỡ)">
+                 <span class="desc-resize-handle-pill"></span>
+                 <div class="desc-size-presets">
+                   <button class="desc-size-chip ${currentH <= 95 ? 'active' : ''}" data-set-desc-size="compact" data-desc-target="series" type="button" title="Thu gọn (85px)">Gọn</button>
+                   <button class="desc-size-chip ${currentH > 95 && currentH <= 180 ? 'active' : ''}" data-set-desc-size="normal" data-desc-target="series" type="button" title="Vừa vặn (145px)">Vừa</button>
+                   <button class="desc-size-chip ${currentH > 180 ? 'active' : ''}" data-set-desc-size="large" data-desc-target="series" type="button" title="Mở rộng (260px)">Lớn</button>
+                 </div>
                </div>`
             : `<p class="muted-text" style="margin:0;font-size:0.83rem">Đang tải mô tả bộ truyện từ Goodreads…</p>`
         }
       `;
+
+      if (desc) {
+        const handle = box.querySelector('.desc-resize-bar[data-resize-desc="series"]');
+        const scrollEl = box.querySelector('.series-overview-scroll');
+        if (handle && scrollEl) {
+          this.initDescResizeDrag(handle, scrollEl, 'series', 65, 360);
+        }
+      }
     }
 
     renderWoodenShelves(books) {
@@ -5216,6 +5331,8 @@
       const readCount = books.filter((b) => (b.progress?.bookPercent || 0) >= 95).length;
       const pct = Math.round((readCount / books.length) * 100);
       const isEnriching = this.enrichingSeriesKeys.has(key);
+      const isCollapsed = Boolean(this.state.descCollapsed?.['series-modal']);
+      const seriesModalDescH = this.getDescHeight('series-modal');
 
       // Next unread or in-progress book in series
       const nextBook =
@@ -5320,19 +5437,34 @@
           </div>
         </div>
 
-        <div class="inset-section">
+        <div class="inset-section ${isCollapsed ? 'collapsed' : ''}" data-desc-section="series-modal">
           <div class="inset-section-header-row">
             <div class="inset-section-label">Mô tả chung bộ truyện (Series Description)</div>
-            <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
-              <span class="meta-font-label-icon">Aa</span>
-              <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
-                ${this.renderMetaFontOptions()}
-              </select>
+            <div class="inset-section-actions">
+              <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
+                <span class="meta-font-label-icon">Aa</span>
+                <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
+                  ${this.renderMetaFontOptions()}
+                </select>
+              </div>
+              <button class="desc-collapse-toggle-btn" data-toggle-desc-collapse="series-modal" type="button" title="${isCollapsed ? 'Mở rộng mô tả' : 'Thu nhỏ mô tả'}">
+                ${isCollapsed ? 'Mở rộng' : 'Thu nhỏ'}
+              </button>
             </div>
           </div>
-          <div class="inset-group">
+          <div class="inset-group desc-body-group">
             <div class="inset-row stack-item">
-              <p class="book-info-desc">${escHtml(profile.description || '')}</p>
+              <div class="book-desc-scroll-wrap" style="height:${seriesModalDescH}px; max-height:${seriesModalDescH}px;">
+                <p class="book-info-desc">${escHtml(profile.description || '')}</p>
+              </div>
+              <div class="desc-resize-bar" data-resize-desc="series-modal" title="Kéo để chỉnh độ cao (hoặc chọn kích cỡ)">
+                <span class="desc-resize-handle-pill"></span>
+                <div class="desc-size-presets">
+                  <button class="desc-size-chip ${seriesModalDescH <= 125 ? 'active' : ''}" data-set-desc-size="compact" data-desc-target="series-modal" type="button" title="Thu gọn (110px)">Gọn</button>
+                  <button class="desc-size-chip ${seriesModalDescH > 125 && seriesModalDescH <= 240 ? 'active' : ''}" data-set-desc-size="normal" data-desc-target="series-modal" type="button" title="Vừa vặn (200px)">Vừa</button>
+                  <button class="desc-size-chip ${seriesModalDescH > 240 ? 'active' : ''}" data-set-desc-size="large" data-desc-target="series-modal" type="button" title="Mở rộng (320px)">Lớn</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -5374,6 +5506,12 @@
           }
         </div>
       `;
+
+      const handle = body.querySelector('.desc-resize-bar[data-resize-desc="series-modal"]');
+      const scrollEl = body.querySelector('.book-desc-scroll-wrap');
+      if (handle && scrollEl) {
+        this.initDescResizeDrag(handle, scrollEl, 'series-modal', 80, 420);
+      }
     }
 
     async autoEnrichSeries(seriesName, { silent = false } = {}) {
@@ -5487,6 +5625,8 @@
       const desc = (book.description || '').trim();
       const statusLabel = pct >= 96 ? 'Đã hoàn thành' : pct > 0 || book.progress?.updatedAt ? `Đang đọc · ${pct}%` : 'Chưa bắt đầu';
       const isEnriching = this.enrichingBookIds.has(bookId);
+      const isCollapsed = Boolean(this.state.descCollapsed?.book);
+      const bookDescH = this.getDescHeight('book');
 
       body.innerHTML = `
         <div class="book-info-hero">
@@ -5596,21 +5736,40 @@
           </div>
         </div>
 
-        <div class="inset-section">
+        <div class="inset-section ${isCollapsed ? 'collapsed' : ''}" data-desc-section="book">
           <div class="inset-section-header-row">
             <div class="inset-section-label">Mô tả sách (Description)</div>
-            <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
-              <span class="meta-font-label-icon">Aa</span>
-              <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
-                ${this.renderMetaFontOptions()}
-              </select>
+            <div class="inset-section-actions">
+              <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
+                <span class="meta-font-label-icon">Aa</span>
+                <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
+                  ${this.renderMetaFontOptions()}
+                </select>
+              </div>
+              ${
+                desc
+                  ? `<button class="desc-collapse-toggle-btn" data-toggle-desc-collapse="book" type="button" title="${isCollapsed ? 'Mở rộng mô tả' : 'Thu nhỏ mô tả'}">
+                      ${isCollapsed ? 'Mở rộng' : 'Thu nhỏ'}
+                    </button>`
+                  : ''
+              }
             </div>
           </div>
-          <div class="inset-group">
+          <div class="inset-group desc-body-group">
             <div class="inset-row stack-item">
               ${
                 desc
-                  ? `<p class="book-info-desc">${escHtml(desc)}</p>`
+                  ? `<div class="book-desc-scroll-wrap" style="height:${bookDescH}px; max-height:${bookDescH}px;">
+                       <p class="book-info-desc">${escHtml(desc)}</p>
+                     </div>
+                     <div class="desc-resize-bar" data-resize-desc="book" title="Kéo để chỉnh độ cao (hoặc chọn kích cỡ)">
+                       <span class="desc-resize-handle-pill"></span>
+                       <div class="desc-size-presets">
+                         <button class="desc-size-chip ${bookDescH <= 125 ? 'active' : ''}" data-set-desc-size="compact" data-desc-target="book" type="button" title="Thu gọn (110px)">Gọn</button>
+                         <button class="desc-size-chip ${bookDescH > 125 && bookDescH <= 240 ? 'active' : ''}" data-set-desc-size="normal" data-desc-target="book" type="button" title="Vừa vặn (200px)">Vừa</button>
+                         <button class="desc-size-chip ${bookDescH > 240 ? 'active' : ''}" data-set-desc-size="large" data-desc-target="book" type="button" title="Mở rộng (320px)">Lớn</button>
+                       </div>
+                     </div>`
                   : `<p class="muted-text">Tệp EPUB này không kèm đoạn giới thiệu (dc:description) trong metadata.</p>`
               }
             </div>
@@ -5634,6 +5793,14 @@
           </div>
         </div>
       `;
+
+      if (desc) {
+        const handle = body.querySelector('.desc-resize-bar[data-resize-desc="book"]');
+        const scrollEl = body.querySelector('.book-desc-scroll-wrap');
+        if (handle && scrollEl) {
+          this.initDescResizeDrag(handle, scrollEl, 'book', 80, 420);
+        }
+      }
     }
 
     exportBookNotesMarkdown() {
@@ -6108,6 +6275,51 @@
         const fontSel = e.target.closest('[data-change-meta-font]');
         if (fontSel) {
           this.setMetaFont(fontSel.value);
+        }
+      });
+      document.addEventListener('click', (e) => {
+        const toggleSeriesBtn = e.target.closest('[data-toggle-series-overview-collapse]');
+        if (toggleSeriesBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.toggleDescCollapse('series');
+          return;
+        }
+
+        const toggleDescBtn = e.target.closest('[data-toggle-desc-collapse]');
+        if (toggleDescBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.toggleDescCollapse(toggleDescBtn.dataset.toggleDescCollapse);
+          return;
+        }
+
+        const sizeBtn = e.target.closest('[data-set-desc-size]');
+        if (sizeBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          const sizeMode = sizeBtn.dataset.setDescSize;
+          const resizeBar = sizeBtn.closest('.desc-resize-bar');
+          const targetKey = sizeBtn.dataset.descTarget || resizeBar?.dataset?.resizeDesc || 'series';
+
+          let targetH = 145;
+          if (targetKey === 'series') {
+            targetH = sizeMode === 'compact' ? 85 : sizeMode === 'large' ? 260 : 145;
+          } else {
+            targetH = sizeMode === 'compact' ? 110 : sizeMode === 'large' ? 320 : 200;
+          }
+
+          if (resizeBar) {
+            resizeBar.querySelectorAll('.desc-size-chip').forEach((c) => c.classList.remove('active'));
+            sizeBtn.classList.add('active');
+          }
+          const container = resizeBar?.parentElement;
+          const scrollEl = container?.querySelector('.series-overview-scroll, .book-desc-scroll-wrap');
+          if (scrollEl) {
+            scrollEl.style.height = `${targetH}px`;
+            scrollEl.style.maxHeight = `${targetH}px`;
+          }
+          this.setDescHeight(targetKey, targetH);
         }
       });
       document.getElementById('lib-studio-btn')?.addEventListener('click', () => this.openStudioSheet());

@@ -6234,28 +6234,33 @@ html[data-theme='amoled'] .banner-sticker-mode-seg {
   font-family: var(--meta-font, var(--reader-font));
   color: var(--ink);
   margin: 0;
+}
+
+.book-desc-scroll-wrap {
+  width: 100%;
   max-height: 220px;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 6px;
   scrollbar-width: thin;
   scrollbar-color: rgba(128, 128, 128, 0.4) transparent;
+  transition: max-height var(--dur-fast), height var(--dur-fast);
 }
 
-.book-info-desc::-webkit-scrollbar {
+.book-desc-scroll-wrap::-webkit-scrollbar {
   width: 5px;
 }
 
-.book-info-desc::-webkit-scrollbar-track {
+.book-desc-scroll-wrap::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.book-info-desc::-webkit-scrollbar-thumb {
+.book-desc-scroll-wrap::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.35);
   border-radius: 999px;
 }
 
-.book-info-desc::-webkit-scrollbar-thumb:hover {
+.book-desc-scroll-wrap::-webkit-scrollbar-thumb:hover {
   background: rgba(128, 128, 128, 0.6);
 }
 
@@ -6422,10 +6427,112 @@ a.goodreads-pill:hover {
   font-family: var(--meta-font, inherit);
 }
 
+/* Description Resize Handle & Quick Presets */
+.desc-resize-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 6px 1px;
+  margin-top: 3px;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.desc-resize-handle-pill {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong, rgba(128, 128, 128, 0.35));
+  transition: background var(--dur-fast), transform var(--dur-fast);
+}
+
+.desc-resize-bar:hover .desc-resize-handle-pill,
+.desc-resize-bar.resizing .desc-resize-handle-pill {
+  background: var(--accent);
+  transform: scaleY(1.4);
+}
+
+.desc-size-presets {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.desc-size-chip {
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-solid);
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.25;
+  transition: all var(--dur-fast);
+}
+
+.desc-size-chip:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.desc-size-chip.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+/* Collapse / Expand Buttons & Actions */
+.inset-section-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.desc-collapse-toggle-btn,
+.series-overview-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2.5px 8px;
+  border-radius: 999px;
+  background: var(--surface-solid);
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  cursor: pointer;
+  line-height: 1.2;
+  transition: all var(--dur-fast);
+}
+
+.desc-collapse-toggle-btn:hover,
+.series-overview-toggle-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.series-shelf-overview.collapsed {
+  padding-bottom: 12px;
+}
+
+.series-shelf-overview.collapsed .series-overview-scroll,
+.series-shelf-overview.collapsed .desc-resize-bar {
+  display: none !important;
+}
+
+.inset-section.collapsed .desc-body-group {
+  display: none !important;
+}
+
 @media (max-width: 640px) {
-  .book-info-desc {
+  .book-desc-scroll-wrap {
     max-height: 175px;
-    font-size: 0.89rem;
   }
   .series-overview-scroll {
     max-height: 110px;
