@@ -80,6 +80,7 @@
   --reader-para-gap: 0.62em;
   --reader-align: justify;
   --reader-pad-x: 24px;
+  --meta-font: 'Literata', Georgia, 'Times New Roman', serif;
 
   /* M3 Emphasized Motion */
   --ease-apple: cubic-bezier(0.2, 0, 0, 1);
@@ -4439,6 +4440,7 @@ html[data-theme='amoled'] .ink-canvas {
 
 .book-info-name {
   margin: 0 0 4px;
+  font-family: var(--meta-font, var(--md-display-font));
   font-size: 1.08rem;
   font-weight: 700;
   line-height: 1.25;
@@ -4446,6 +4448,7 @@ html[data-theme='amoled'] .ink-canvas {
 }
 
 .book-info-author {
+  font-family: var(--meta-font, inherit);
   font-size: 0.86rem;
   font-weight: 500;
   color: var(--ink-muted);
@@ -6226,10 +6229,34 @@ html[data-theme='amoled'] .banner-sticker-mode-seg {
 /* ==================== GOODREADS DESCRIPTIONS, BADGES & SERIES OVERVIEW ==================== */
 .book-info-desc {
   white-space: pre-line;
-  line-height: 1.64;
-  font-size: 0.9rem;
+  line-height: 1.66;
+  font-size: 0.92rem;
+  font-family: var(--meta-font, var(--reader-font));
   color: var(--ink);
   margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.4) transparent;
+}
+
+.book-info-desc::-webkit-scrollbar {
+  width: 5px;
+}
+
+.book-info-desc::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.book-info-desc::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 999px;
+}
+
+.book-info-desc::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.6);
 }
 
 .goodreads-pill {
@@ -6264,6 +6291,7 @@ a.goodreads-pill:hover {
   margin: 6px 0 2px;
   font-size: 0.74rem;
   line-height: 1.4;
+  font-family: var(--meta-font, inherit);
   color: var(--ink-muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -6295,26 +6323,115 @@ a.goodreads-pill:hover {
   flex-wrap: wrap;
 }
 
+.series-overview-scroll {
+  width: 100%;
+  max-height: 135px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.4) transparent;
+}
+
+.series-overview-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.series-overview-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.series-overview-scroll::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 999px;
+}
+
+.series-overview-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.6);
+}
+
 .series-overview-text {
   margin: 0;
-  font-size: 0.85rem;
-  line-height: 1.58;
+  font-size: 0.88rem;
+  line-height: 1.62;
+  font-family: var(--meta-font, var(--reader-font));
   color: var(--ink);
   white-space: pre-line;
 }
 
-.series-overview-text.clamped {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.series-overview-actions {
+/* Metadata Font Picker controls */
+.inset-section-header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  margin-bottom: 6px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.inset-section-header-row .inset-section-label {
+  margin-bottom: 0;
+}
+
+.meta-font-picker-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2.5px 8px;
+  border-radius: 999px;
+  background: var(--surface-solid);
+  border: 1px solid var(--border);
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+  line-height: 1.2;
+}
+
+.meta-font-label-icon {
+  font-weight: 700;
+  font-size: 0.78rem;
+  font-family: 'Literata', Georgia, serif;
+  color: var(--accent);
+  user-select: none;
+}
+
+.meta-font-inline-select {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  padding: 1px 2px;
+  font-family: inherit;
+}
+
+.meta-font-inline-select:focus-visible {
+  outline: 1.5px solid var(--accent);
+  border-radius: 4px;
+}
+
+.shelf-item-author,
+.col-series-author {
+  font-family: var(--meta-font, inherit);
+}
+
+.book-review-textarea,
+#meta-edit-desc,
+#series-edit-desc {
+  font-family: var(--meta-font, inherit);
+}
+
+@media (max-width: 640px) {
+  .book-info-desc {
+    max-height: 175px;
+    font-size: 0.89rem;
+  }
+  .series-overview-scroll {
+    max-height: 110px;
+  }
+  .series-overview-text {
+    font-size: 0.84rem;
+  }
 }
 

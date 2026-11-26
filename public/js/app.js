@@ -52,11 +52,25 @@
     cormorant: "'Cormorant Garamond', Georgia, serif",
     playfair: "'Playfair Display', Georgia, serif",
     literata: "'Literata', Georgia, 'Times New Roman', serif",
+    bookerly: "'Bookerly', 'Literata', Georgia, 'Times New Roman', serif",
     lora: "'Lora', Georgia, serif",
     newsreader: "'Newsreader', Georgia, serif",
     atkinson: "'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, sans-serif",
-    sans: "'Roboto', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif",
+    sans: "'Plus Jakarta Sans', 'Roboto', system-ui, -apple-system, 'Segoe UI', sans-serif",
+    system: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
   };
+
+  const META_FONTS = [
+    { id: 'literata', label: 'Literata (Mặc định)' },
+    { id: 'bookerly', label: 'Bookerly (Kindle)' },
+    { id: 'lora', label: 'Lora (Trang nhã)' },
+    { id: 'newsreader', label: 'Newsreader' },
+    { id: 'cormorant', label: 'Cormorant Garamond' },
+    { id: 'playfair', label: 'Playfair Display' },
+    { id: 'sans', label: 'Plus Jakarta / Sans' },
+    { id: 'atkinson', label: 'Atkinson' },
+    { id: 'system', label: 'Hệ thống (System)' },
+  ];
 
   const BUILTIN_BODY_FONTS = [
     { id: 'literata', label: 'Literata' },
@@ -1640,6 +1654,13 @@
       root.style.setProperty('--reader-para-gap', `${Number(s.paraGap ?? 0.62).toFixed(2)}em`);
       root.style.setProperty('--reader-align', s.textAlign || 'justify');
 
+      const metaFontId = this.state.metaFont || s.metaFont || 'literata';
+      root.style.setProperty('--meta-font', FONT_STACKS[metaFontId] || FONT_STACKS.literata);
+      const moreMetaSel = document.getElementById('more-meta-font-select');
+      if (moreMetaSel && moreMetaSel.value !== metaFontId) {
+        moreMetaSel.value = metaFontId;
+      }
+
       const marginMap = { narrow: '14px', medium: '24px', wide: '40px' };
       root.style.setProperty('--reader-pad-x', marginMap[s.margin] || '24px');
 
@@ -1662,6 +1683,33 @@
       this.syncSettingsControls();
       this.reader.applyVisualMode();
       this.inkCanvas?.redraw();
+    }
+
+    renderMetaFontOptions() {
+      const active = this.state.metaFont || this.state.settings?.metaFont || 'literata';
+      return META_FONTS.map(
+        (f) => `<option value="${f.id}" ${f.id === active ? 'selected' : ''}>${f.label}</option>`
+      ).join('');
+    }
+
+    setMetaFont(fontId) {
+      if (!fontId) return;
+      const valid = FONT_STACKS[fontId] ? fontId : 'literata';
+      this.state.metaFont = valid;
+      if (!this.state.settings) this.state.settings = {};
+      this.state.settings.metaFont = valid;
+
+      const stack = FONT_STACKS[valid] || FONT_STACKS.literata;
+      document.documentElement.style.setProperty('--meta-font', stack);
+
+      // Re-sync all font selector dropdowns in DOM
+      document.querySelectorAll('[data-change-meta-font], #more-meta-font-select').forEach((sel) => {
+        if (sel.value !== valid) sel.value = valid;
+      });
+
+      this.scheduleSync();
+      const metaObj = META_FONTS.find((f) => f.id === valid);
+      this.toast(`Đã chọn phông chữ mô tả & tác giả: ${metaObj?.label || valid}`);
     }
 
     applyBackgroundToDOM() {
@@ -2821,22 +2869,21 @@
           <div class="series-overview-badges">
             ${grBadge}
             ${genresHtml}
+            <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
+              <span class="meta-font-label-icon">Aa</span>
+              <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
+                ${this.renderMetaFontOptions()}
+              </select>
+            </div>
           </div>
           <button class="inline-series-info-link" data-open-series-info="${escHtml(seriesName)}" type="button">Chi tiết &amp; Sửa bộ truyện</button>
         </div>
         ${
           desc
-            ? `<p class="series-overview-text ${isLong && !isExpanded ? 'clamped' : ''}">${escHtml(desc)}</p>`
-            : `<p class="muted-text" style="margin:0;font-size:0.83rem">Đang tải mô tả bộ truyện từ Goodreads…</p>`
-        }
-        ${
-          isLong
-            ? `<div class="series-overview-actions">
-                 <button class="inline-series-info-link" data-toggle-series-overview="${escHtml(key)}" type="button">${
-                   isExpanded ? 'Thu gọn mô tả' : 'Xem toàn bộ mô tả'
-                 }</button>
+            ? `<div class="series-overview-scroll">
+                 <p class="series-overview-text">${escHtml(desc)}</p>
                </div>`
-            : ''
+            : `<p class="muted-text" style="margin:0;font-size:0.83rem">Đang tải mô tả bộ truyện từ Goodreads…</p>`
         }
       `;
     }
@@ -5274,7 +5321,15 @@
         </div>
 
         <div class="inset-section">
-          <div class="inset-section-label">Mô tả chung bộ truyện (Series Description)</div>
+          <div class="inset-section-header-row">
+            <div class="inset-section-label">Mô tả chung bộ truyện (Series Description)</div>
+            <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
+              <span class="meta-font-label-icon">Aa</span>
+              <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
+                ${this.renderMetaFontOptions()}
+              </select>
+            </div>
+          </div>
           <div class="inset-group">
             <div class="inset-row stack-item">
               <p class="book-info-desc">${escHtml(profile.description || '')}</p>
@@ -5542,7 +5597,15 @@
         </div>
 
         <div class="inset-section">
-          <div class="inset-section-label">Mô tả sách (Description)</div>
+          <div class="inset-section-header-row">
+            <div class="inset-section-label">Mô tả sách (Description)</div>
+            <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
+              <span class="meta-font-label-icon">Aa</span>
+              <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
+                ${this.renderMetaFontOptions()}
+              </select>
+            </div>
+          </div>
           <div class="inset-group">
             <div class="inset-row stack-item">
               ${
@@ -6037,6 +6100,15 @@
       document.getElementById('lib-dark-toggle')?.addEventListener('click', () => this.toggleDarkMode());
       document.getElementById('more-dark-mode-switch')?.addEventListener('change', (e) => {
         this.toggleDarkMode(Boolean(e.target.checked));
+      });
+      document.getElementById('more-meta-font-select')?.addEventListener('change', (e) => {
+        this.setMetaFont(e.target.value);
+      });
+      document.addEventListener('change', (e) => {
+        const fontSel = e.target.closest('[data-change-meta-font]');
+        if (fontSel) {
+          this.setMetaFont(fontSel.value);
+        }
       });
       document.getElementById('lib-studio-btn')?.addEventListener('click', () => this.openStudioSheet());
       document.getElementById('lib-more-btn')?.addEventListener('click', () => this.openMoreSheet());
