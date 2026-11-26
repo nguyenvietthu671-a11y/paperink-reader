@@ -116,24 +116,37 @@
   const QUICK_SIZES = [1.2, 2.2, 3.4, 5.2, 8.0];
 
   class SPenInkCanvas {
-    constructor({ onSavePage, onActiveChange, toast }) {
+    constructor({ onSavePage, onActiveChange, onPenDetected, toast }) {
       this.onSavePage = onSavePage;
       this.onActiveChange = onActiveChange;
+      this.onPenDetected = onPenDetected;
       this.toast = toast;
 
       this.canvas = document.getElementById('ink-canvas');
       this.stage = document.getElementById('reader-stage');
       this.toolbar = document.getElementById('pen-toolbar');
+      this.quickPill = document.getElementById('spen-quick-pill');
       this.detailPanel = document.getElementById('pen-detail-panel');
       this.previewCanvas = document.getElementById('pen-preview-canvas');
       this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
 
       this.active = false;
       this.detailOpen = false;
-      this.sPenOnly = false;
+      // Smart Dual Mode ON by default: S Pen writes notes immediately, Finger turns pages & rejects palm!
+      this.sPenOnly = localStorage.getItem('paperink_spen_smart_mode') !== '0';
       this.autoSPenDetect = true;
 
+      this.penHovering = false;
+      this.penDown = false;
+      this.lastPenEventAt = 0;
+      this.lastPenStrokeEndAt = 0;
+      this.spenDetectedInSession = false;
+      this._shownSeamlessHint = false;
+      this._rangeDecayTimer = null;
+      this._pillIdleTimer = null;
+
       this.tool = 'fountain'; // fountain | ballpoint | calligraphy | pencil | highlighter | eraser
+      this.lastNonEraserTool = 'fountain';
       this.color = 'auto';
       this.width = 2.4;
       this.opacity = 0.96;
@@ -162,6 +175,7 @@
 
       this.drawing = false;
       this.activePointerId = null;
+      this.activePointerType = '';
       this.currentStroke = null;
       this.erasedDuringGesture = false;
       this._preEraseSnapshot = null;
@@ -191,19 +205,101 @@
       return TOOL_META[t] ? t : 'fountain';
     }
 
+    isPenHoverFresh() {
+      return Boolean(this.penHovering && Date.now() - this.lastPenEventAt < 600);
+    }
+
+    shouldRejectTouchAsPalm() {
+      return Boolean(
+        this.drawing ||
+          this.penDown ||
+          this.isPenHoverFresh() ||
+          Date.now() - this.lastPenStrokeEndAt < 450
+      );
+    }
+
+    shouldSuppressSyntheticTap() {
+      return Boolean(
+        this.drawing ||
+          this.penDown ||
+          Date.now() - this.lastPenStrokeEndAt < 560
+      );
+    }
+
+    setPenInRange(inRange) {
+      clearTimeout(this._rangeDecayTimer);
+      const on = Boolean(inRange);
+      this.stage?.classList.toggle('spen-in-range', on);
+      if (on && !this.drawing && !this.penDown) {
+        this._rangeDecayTimer = setTimeout(() => {
+          if (!this.drawing && !this.penDown && !this.isPenHoverFresh()) {
+            this.penHovering = false;
+            this.stage?.classList.remove('spen-in-range');
+          }
+        }, 640);
+      }
+    }
+
     isDrawingEnabledForPointer(e) {
       if (!this.bookId || !this.pageKey) return false;
       if (e.pointerType === 'pen' && (this.active || this.autoSPenDetect)) return true;
       if (!this.active) return false;
-      if (this.sPenOnly && e.pointerType === 'touch') return false;
+      if (this.sPenOnly && e.pointerType !== 'pen') return false;
       return true;
+    }
+
+    syncCanvasPointerClasses() {
+      this.canvas?.classList.toggle('pen-active', this.active);
+      this.canvas?.classList.toggle('draw-with-all', Boolean(this.active && !this.sPenOnly));
+    }
+
+    wakeQuickPill() {
+      if (!this.quickPill) return;
+      this.quickPill.classList.remove('idle-dim');
+      clearTimeout(this._pillIdleTimer);
+      this._pillIdleTimer = setTimeout(() => {
+        if (!this.drawing && !this.isPenHoverFresh()) {
+          this.quickPill?.classList.add('idle-dim');
+        }
+      }, 4200);
+    }
+
+    syncQuickPillUI() {
+      if (!this.quickPill) return;
+      const shouldShow = Boolean(
+        this.bookId && !this.active && (this.spenDetectedInSession || this.strokes.length > 0)
+      );
+      this.quickPill.classList.toggle('hidden', !shouldShow);
+      if (!shouldShow) return;
+
+      const isEraser = this.tool === 'eraser';
+      const dotEl = document.getElementById('spen-pill-color-dot');
+      const nameEl = document.getElementById('spen-pill-tool-name');
+      const erBtn = document.getElementById('spen-pill-eraser-btn');
+      const undoBtn = document.getElementById('spen-pill-undo-btn');
+
+      if (dotEl) {
+        dotEl.style.background = isEraser
+          ? 'repeating-linear-gradient(45deg,#888 0 3px,#eee 3px 6px)'
+          : this.color === 'auto'
+          ? 'linear-gradient(135deg,#1d1d1f 50%,#e4dfd5 50%)'
+          : this.color;
+      }
+      if (nameEl) {
+        nameEl.textContent = TOOL_META[this.tool]?.label || 'Bút máy';
+      }
+      if (erBtn) {
+        erBtn.classList.toggle('active', isEraser);
+      }
+      if (undoBtn) {
+        undoBtn.disabled = this.strokes.length === 0;
+      }
     }
 
     setActive(flag) {
       this.active = Boolean(flag);
       if (!this.active) this.setDetailOpen(false);
-      this.canvas?.classList.toggle('pen-active', this.active);
-      this.canvas?.classList.toggle('spen-only', this.active && this.sPenOnly);
+      this.syncCanvasPointerClasses();
       this.toolbar?.classList.toggle('open', this.active);
       document.getElementById('hud-pen-btn')?.classList.toggle('active', this.active);
       document.getElementById('hud-pen-btn')?.setAttribute('aria-pressed', String(this.active));
@@ -222,7 +318,10 @@
 
     setSPenOnly(flag) {
       this.sPenOnly = Boolean(flag);
-      this.canvas?.classList.toggle('spen-only', this.active && this.sPenOnly);
+      try {
+        localStorage.setItem('paperink_spen_smart_mode', this.sPenOnly ? '1' : '0');
+      } catch (_) {}
+      this.syncCanvasPointerClasses();
       this.syncToolbarUI();
     }
 
@@ -232,6 +331,9 @@
         this.setDetailOpen(!this.detailOpen);
         return;
       }
+      if (this.tool !== 'eraser') {
+        this.lastNonEraserTool = this.tool;
+      }
       // Save current tool state
       this.toolPrefs[this.tool] = {
         width: this.width,
@@ -239,6 +341,9 @@
         color: this.color,
       };
       this.tool = norm;
+      if (norm !== 'eraser') {
+        this.lastNonEraserTool = norm;
+      }
       const pref = this.toolPrefs[norm] || TOOL_META[norm];
       this.width = pref.width ?? TOOL_META[norm].defaultWidth;
       this.opacity = pref.opacity ?? TOOL_META[norm].defaultOpacity;
@@ -263,10 +368,14 @@
 
     clearContext() {
       this.setActive(false);
+      this.setPenInRange(false);
+      this.penHovering = false;
+      this.penDown = false;
       this.bookId = null;
       this.pageKey = null;
       this.strokes = [];
       this.redoStack = [];
+      this.quickPill?.classList.add('hidden');
       if (this.ctx && this.canvas) {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
       }
@@ -805,12 +914,14 @@
       if (palmBtn) {
         palmBtn.classList.toggle('active', this.sPenOnly);
         palmBtn.setAttribute('aria-pressed', String(this.sPenOnly));
+        palmBtn.textContent = this.sPenOnly ? 'Bút viết · Tay lật' : 'Vẽ cả bằng tay';
       }
       const undoBtn = document.getElementById('pen-undo-btn');
       const redoBtn = document.getElementById('pen-redo-btn');
       if (undoBtn) undoBtn.disabled = this.strokes.length === 0;
       if (redoBtn) redoBtn.disabled = this.redoStack.length === 0;
 
+      this.syncQuickPillUI();
       this.renderPaletteTabs();
       this.renderColorSwatches();
       this.renderFavoritesBar();
@@ -827,20 +938,81 @@
       });
       ro.observe(this.stage);
 
-      // Capture-phase S Pen auto-activation
+      // Wacom EMR S Pen Hover & Proximity Detection (Galaxy S25 Ultra & Galaxy Book5 360)
+      const onStagePenHover = (e) => {
+        if (!this.bookId || e.pointerType !== 'pen') return;
+        this.penHovering = true;
+        this.lastPenEventAt = Date.now();
+        this.setPenInRange(true);
+        this.onPenDetected?.();
+        if (!this.spenDetectedInSession) {
+          this.spenDetectedInSession = true;
+          this.syncQuickPillUI();
+        }
+        this.wakeQuickPill();
+      };
+
+      this.stage.addEventListener('pointerenter', onStagePenHover, { capture: true });
+      this.stage.addEventListener(
+        'pointermove',
+        (e) => {
+          if (e.pointerType === 'pen' && !this.drawing) {
+            onStagePenHover(e);
+          }
+        },
+        { capture: true }
+      );
+      this.stage.addEventListener(
+        'pointerleave',
+        (e) => {
+          if (e.pointerType === 'pen') {
+            this.penHovering = false;
+            if (!this.drawing && !this.penDown) {
+              this.setPenInRange(false);
+            }
+          }
+        },
+        { capture: true }
+      );
+
+      // Prevent Android Chrome / Samsung Internet / Safari from cancelling S Pen strokes with native scroll
+      const blockStylusNativePan = (e) => {
+        if (!this.bookId) return;
+        const firstTouch = e.touches?.[0];
+        const isStylusTouch = firstTouch && firstTouch.touchType === 'stylus';
+        if (this.drawing || this.penDown || this.isPenHoverFresh() || isStylusTouch) {
+          if (e.cancelable) e.preventDefault();
+        }
+      };
+      this.stage.addEventListener('touchstart', blockStylusNativePan, { capture: true, passive: false });
+      this.stage.addEventListener('touchmove', blockStylusNativePan, { capture: true, passive: false });
+
+      // Capture-phase Seamless S Pen Writing (Zero-Mode: write anytime, finger still turns pages!)
       this.stage.addEventListener(
         'pointerdown',
         (e) => {
           if (!this.isDrawingEnabledForPointer(e)) return;
 
-          if (e.pointerType === 'pen' && !this.active) {
-            this.sPenOnly = true;
-            this.setActive(true);
-            this.toast?.('Đã kích hoạt bút S Pen (Chống tì tay BẬT)');
+          if (e.pointerType === 'pen') {
+            this.penDown = true;
+            this.penHovering = true;
+            this.lastPenEventAt = Date.now();
+            this.setPenInRange(true);
+            this.onPenDetected?.();
+            if (!this.spenDetectedInSession) {
+              this.spenDetectedInSession = true;
+              this.syncQuickPillUI();
+              if (!this._shownSeamlessHint) {
+                this._shownSeamlessHint = true;
+                this.toast?.('Bút S Pen: Ghi chú trực tiếp · Ngón tay: Lật trang');
+              }
+            }
+            this.wakeQuickPill();
           }
 
           // Auto-collapse pen settings drawer as soon as user starts writing on the page
           if (this.detailOpen) this.setDetailOpen(false);
+          window.getSelection()?.removeAllRanges();
 
           e.preventDefault();
           e.stopPropagation();
@@ -856,10 +1028,13 @@
 
           this.drawing = true;
           this.activePointerId = e.pointerId;
+          this.activePointerType = e.pointerType || '';
           this.erasedDuringGesture = false;
-          this.canvas.setPointerCapture?.(e.pointerId);
+          try {
+            this.stage.setPointerCapture?.(e.pointerId);
+          } catch (_) {}
 
-          const isEraser = this.tool === 'eraser' || e.buttons === 32 || e.button === 5;
+          const isEraser = this.tool === 'eraser' || e.buttons === 32 || e.button === 5 || (e.buttons & 32) === 32;
           this._gestureIsEraser = isEraser;
 
           if (isEraser) {
@@ -883,11 +1058,15 @@
 
       const handleMove = (e) => {
         if (!this.drawing || e.pointerId !== this.activePointerId) return;
+        if (e.pointerType === 'pen') {
+          this.lastPenEventAt = Date.now();
+        }
         e.preventDefault();
         e.stopPropagation();
 
         const rect = this.stage.getBoundingClientRect();
-        const events = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e];
+        const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : null;
+        const events = coalesced && coalesced.length > 0 ? coalesced : [e];
         for (const ev of events) {
           const nx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / Math.max(1, rect.width)));
           const ny = Math.max(0, Math.min(1, (ev.clientY - rect.top) / Math.max(1, rect.height)));
@@ -926,14 +1105,29 @@
 
       const handleUp = (e) => {
         if (!this.drawing || e.pointerId !== this.activePointerId) return;
+        const wasPen = this.activePointerType === 'pen' || e.pointerType === 'pen';
         this.drawing = false;
+        this.penDown = false;
         this.activePointerId = null;
+        this.activePointerType = '';
+        if (wasPen) {
+          this.lastPenEventAt = Date.now();
+          this.lastPenStrokeEndAt = Date.now();
+          this.setPenInRange(this.isPenHoverFresh());
+          this.wakeQuickPill();
+        }
+        try {
+          this.stage.releasePointerCapture?.(e.pointerId);
+        } catch (_) {}
         try {
           this.canvas.releasePointerCapture?.(e.pointerId);
         } catch (_) {}
 
         if (this._gestureIsEraser) {
-          if (this.erasedDuringGesture) this.persist();
+          if (this.erasedDuringGesture) {
+            this.persist();
+            this.syncToolbarUI();
+          }
           return;
         }
 
@@ -942,14 +1136,32 @@
           this.currentStroke = null;
           this.redraw();
           this.persist();
+          this.syncToolbarUI();
         }
       };
 
-      this.canvas.addEventListener('pointermove', handleMove);
-      this.canvas.addEventListener('pointerup', handleUp);
-      this.canvas.addEventListener('pointercancel', handleUp);
+      this.stage.addEventListener('pointermove', handleMove, { capture: true });
+      this.stage.addEventListener('pointerup', handleUp, { capture: true });
+      this.stage.addEventListener('pointercancel', handleUp, { capture: true });
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
+
+      // Quick Pill actions (non-intrusive mini pill when full toolbar is collapsed)
+      document.getElementById('spen-pill-open-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setActive(true);
+      });
+      document.getElementById('spen-pill-eraser-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const next = this.tool === 'eraser' ? this.lastNonEraserTool || 'fountain' : 'eraser';
+        this.selectTool(next, false);
+        this.wakeQuickPill();
+      });
+      document.getElementById('spen-pill-undo-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.undo();
+        this.wakeQuickPill();
+      });
 
       // Tool buttons (tap again on active tool to open/close Samsung Notes Pen Panel!)
       document.querySelectorAll('.pen-tool-btn').forEach((btn) => {
@@ -992,6 +1204,7 @@
           const fav = this.favorites.find((f) => f.id === favApply.dataset.favApply);
           if (fav) {
             this.tool = this.normalizeTool(fav.tool);
+            if (this.tool !== 'eraser') this.lastNonEraserTool = this.tool;
             this.color = fav.color;
             this.width = fav.width;
             this.opacity = fav.opacity ?? TOOL_META[this.tool].defaultOpacity;
@@ -1076,11 +1289,14 @@
         this.setSPenOnly(!this.sPenOnly);
         this.toast?.(
           this.sPenOnly
-            ? 'Chỉ nhận S Pen (Chống tì tay BẬT — ngón tay vẫn lật trang bình thường)'
-            : 'Cho phép vẽ bằng cả S Pen, tay và chuột'
+            ? 'Tự động: Bút S Pen ghi chú · Ngón tay lật trang & chống tì tay'
+            : 'Cho phép vẽ bằng cả ngón tay và chuột'
         );
       });
-      document.getElementById('pen-done-btn')?.addEventListener('click', () => this.setActive(false));
+      document.getElementById('pen-done-btn')?.addEventListener('click', () => {
+        this.setActive(false);
+        this.wakeQuickPill();
+      });
     }
   }
 

@@ -271,6 +271,9 @@
         onActiveChange: (isActive) => {
           if (isActive) this.reader.setHudVisible(false);
         },
+        onPenDetected: () => {
+          this.reader?.abortTouchGesture?.();
+        },
         toast: (msg) => this.toast(msg),
       });
 
@@ -278,8 +281,19 @@
         getSettings: () => this.state.settings,
         getPenState: () => ({
           active: this.inkCanvas.active,
+          detailOpen: this.inkCanvas.detailOpen,
           sPenOnly: this.inkCanvas.sPenOnly,
+          shouldRejectTouch: this.inkCanvas.shouldRejectTouchAsPalm(),
+          shouldSuppressTap: this.inkCanvas.shouldSuppressSyntheticTap(),
         }),
+        collapsePenToolbar: () => {
+          if (this.inkCanvas.detailOpen) {
+            this.inkCanvas.setDetailOpen(false);
+          } else {
+            this.inkCanvas.setActive(false);
+            this.inkCanvas.wakeQuickPill?.();
+          }
+        },
         onPageChanged: ({ bookId, pageKey, meta }) => this.loadInkForPage(bookId, pageKey, meta),
         onBookClosed: () => {
           this.inkCanvas.clearContext();
@@ -1662,14 +1676,17 @@
       const useImage = cfg.bgMode === 'image' && Boolean(imgUrl);
       const usePreset = cfg.bgMode === 'preset' || (cfg.bgMode === 'image' && !imgUrl && Boolean(cfg.bgPreset));
 
+      const blurPct = Math.max(0, Math.min(100, Math.round(Number(cfg.bgBlur || 0))));
+      const blurPx = Number(((blurPct / 100) * 36).toFixed(2));
+      const blurScale = blurPct > 0 ? `scale(${(1 + (blurPct / 100) * 0.12).toFixed(3)})` : '';
+
       if (useImage) {
         wpEl.style.backgroundColor = darkActive ? '#131314' : '#141416';
         wpEl.style.backgroundImage = `url("${imgUrl}")`;
         wpEl.style.backgroundSize = 'cover';
         wpEl.style.backgroundPosition = 'center';
-        const blurPx = Number(cfg.bgBlur || 0);
         wpEl.style.filter = blurPx > 0 ? `blur(${blurPx}px)` : '';
-        wpEl.style.transform = blurPx > 0 ? 'scale(1.06)' : '';
+        wpEl.style.transform = blurScale;
         const baseDim = Number(cfg.bgDim || 0) / 100;
         const dimPct = darkActive ? Math.max(0.44, baseDim) : baseDim;
         scrimEl.style.opacity = String(Math.max(0, Math.min(0.82, dimPct)));
@@ -1684,8 +1701,8 @@
         wpEl.style.backgroundImage = preset?.css || 'none';
         wpEl.style.backgroundSize = 'cover';
         wpEl.style.backgroundPosition = 'center';
-        wpEl.style.filter = '';
-        wpEl.style.transform = '';
+        wpEl.style.filter = blurPx > 0 ? `blur(${blurPx}px)` : '';
+        wpEl.style.transform = blurScale;
         const baseDim = Number(cfg.bgDim || 0) / 100;
         const dimPct = darkActive && !preset?.isDark ? Math.max(0.54, baseDim) : baseDim;
         scrimEl.style.opacity = String(Math.max(0, Math.min(0.82, dimPct)));
@@ -3965,6 +3982,11 @@
           )
           .join('');
       }
+      const blurPctVal = Math.max(0, Math.min(100, Math.round(Number(cfg.bgBlur || 0))));
+      const presetBlurInp = document.getElementById('set-preset-blur');
+      const presetBlurVal = document.getElementById('val-preset-blur');
+      if (presetBlurInp) presetBlurInp.value = String(blurPctVal);
+      if (presetBlurVal) presetBlurVal.textContent = `${blurPctVal}%`;
       const presetDimInp = document.getElementById('set-preset-dim');
       const presetDimVal = document.getElementById('val-preset-dim');
       if (presetDimInp) presetDimInp.value = String(cfg.bgDim || 0);
@@ -3988,8 +4010,8 @@
 
       const blurInp = document.getElementById('set-wp-blur');
       const blurVal = document.getElementById('val-wp-blur');
-      if (blurInp) blurInp.value = String(cfg.bgBlur || 0);
-      if (blurVal) blurVal.textContent = `${cfg.bgBlur || 0}px`;
+      if (blurInp) blurInp.value = String(blurPctVal);
+      if (blurVal) blurVal.textContent = `${blurPctVal}%`;
       const dimInp = document.getElementById('set-wp-dim');
       const dimVal = document.getElementById('val-wp-dim');
       if (dimInp) dimInp.value = String(cfg.bgDim || 0);
@@ -6078,11 +6100,14 @@
       document.getElementById('set-bg-ambient')?.addEventListener('change', (e) => {
         this.updateEditingWallpaper({ bgAmbient: e.target.checked });
       });
+      document.getElementById('set-preset-blur')?.addEventListener('input', (e) => {
+        this.updateEditingWallpaper({ bgBlur: Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) });
+      });
       document.getElementById('set-preset-dim')?.addEventListener('input', (e) => {
         this.updateEditingWallpaper({ bgDim: parseInt(e.target.value, 10) });
       });
       document.getElementById('set-wp-blur')?.addEventListener('input', (e) => {
-        this.updateEditingWallpaper({ bgBlur: parseInt(e.target.value, 10) });
+        this.updateEditingWallpaper({ bgBlur: Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0)) });
       });
       document.getElementById('set-wp-dim')?.addEventListener('input', (e) => {
         this.updateEditingWallpaper({ bgDim: parseInt(e.target.value, 10) });
@@ -6168,7 +6193,11 @@
         const next = !this.inkCanvas.active;
         this.inkCanvas.setActive(next);
         if (next) {
-          this.toast('Chế độ viết S Pen BẬT — chạm hoặc dùng S Pen viết trực tiếp lên trang');
+          this.toast(
+            this.inkCanvas.sPenOnly
+              ? 'Bảng chọn bút S Pen — Bút viết trực tiếp, ngón tay vẫn lật trang tự nhiên'
+              : 'Bảng chọn bút — Đang cho phép vẽ bằng cả bút và tay'
+          );
         }
       });
 

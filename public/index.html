@@ -476,6 +476,20 @@
       </div>
     </div>
 
+    <!-- Non-Intrusive Floating S Pen Quick Pill (Auto-appears on S Pen hover/write without blocking Finger Page Turns!) -->
+    <div id="spen-quick-pill" class="spen-quick-pill glass-chrome hidden" role="toolbar" aria-label="Công cụ nhanh bút S Pen">
+      <button class="spen-pill-main" id="spen-pill-open-btn" type="button" title="Mở bảng chọn bút &amp; bảng màu S Pen">
+        <span id="spen-pill-color-dot" class="spen-pill-color-dot"></span>
+        <span id="spen-pill-tool-name" class="spen-pill-tool-name">Bút máy</span>
+      </button>
+      <button class="spen-pill-icon" id="spen-pill-eraser-btn" type="button" title="Đổi nhanh Bút / Tẩy" aria-label="Chuyển đổi nhanh tẩy">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1-1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+      </button>
+      <button class="spen-pill-icon" id="spen-pill-undo-btn" type="button" title="Hoàn tác nét vừa viết" aria-label="Hoàn tác nét viết">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+      </button>
+    </div>
+
     <!-- Samsung Notes-Style 6-Pen Floating S Pen Toolbar -->
     <div id="pen-toolbar" class="pen-toolbar glass-chrome" role="toolbar" aria-label="Thanh bút S Pen ghi chú trực tiếp">
       <div class="pen-row-top">
@@ -522,8 +536,8 @@
             <span id="pen-expand-val" class="tabular">2.4</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
           </button>
-          <button class="pen-chip-btn" id="pen-spen-only-btn" type="button" aria-pressed="false" title="Chỉ nhận bút S Pen, ngón tay vẫn lật trang không bị lem">Chỉ S Pen</button>
-          <button class="pen-chip-btn primary" id="pen-done-btn" type="button">Xong</button>
+          <button class="pen-chip-btn active" id="pen-spen-only-btn" type="button" aria-pressed="true" title="Tự động phân biệt: Bút S Pen ghi chú trực tiếp, ngón tay lật trang &amp; chống tì lòng bàn tay">Bút viết · Tay lật</button>
+          <button class="pen-chip-btn primary" id="pen-done-btn" type="button" title="Thu gọn thanh bút (Bút S Pen vẫn viết trực tiếp bình thường)">Thu gọn</button>
         </div>
       </div>
     </div>
@@ -718,7 +732,14 @@
             <div id="bg-preset-grid" class="wp-preset-grid"></div>
             <div class="slider-item sub-slider">
               <div class="slider-meta">
-                <label for="set-preset-dim">Độ dịu nền (Dim)</label>
+                <label for="set-preset-blur">Độ mờ nền (Blur %)</label>
+                <strong id="val-preset-blur" class="tabular">0%</strong>
+              </div>
+              <input id="set-preset-blur" class="apple-range" type="range" min="0" max="100" step="1" value="0" />
+            </div>
+            <div class="slider-item sub-slider">
+              <div class="slider-meta">
+                <label for="set-preset-dim">Độ dịu nền (Dim %)</label>
                 <strong id="val-preset-dim" class="tabular">0%</strong>
               </div>
               <input id="set-preset-dim" class="apple-range" type="range" min="0" max="65" step="5" value="0" />
@@ -737,14 +758,14 @@
             <p id="wp-image-scope-hint" class="setting-hint" style="margin-top:6px"></p>
             <div class="slider-item sub-slider">
               <div class="slider-meta">
-                <label for="set-wp-blur">Độ mờ ảnh nền (Blur)</label>
-                <strong id="val-wp-blur" class="tabular">0px</strong>
+                <label for="set-wp-blur">Độ mờ ảnh nền (Blur %)</label>
+                <strong id="val-wp-blur" class="tabular">0%</strong>
               </div>
-              <input id="set-wp-blur" class="apple-range" type="range" min="0" max="24" step="2" value="0" />
+              <input id="set-wp-blur" class="apple-range" type="range" min="0" max="100" step="1" value="0" />
             </div>
             <div class="slider-item sub-slider">
               <div class="slider-meta">
-                <label for="set-wp-dim">Lớp phủ làm dịu nền (Dim)</label>
+                <label for="set-wp-dim">Lớp phủ làm dịu nền (Dim %)</label>
                 <strong id="val-wp-dim" class="tabular">0%</strong>
               </div>
               <input id="set-wp-dim" class="apple-range" type="range" min="0" max="75" step="5" value="0" />

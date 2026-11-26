@@ -195,10 +195,31 @@
 
     isPenBlockingInput(isTouch = false) {
       const penState = this.cb.getPenState?.();
-      if (!penState || !penState.active) return false;
-      // When Palm Rejection (sPenOnly) is ON, finger touch STILL navigates pages cleanly!
-      if (isTouch && penState.sPenOnly) return false;
-      return true;
+      if (!penState) return false;
+      if (isTouch) {
+        // Reject palm/touch while S Pen is hovering, actively writing, or within lift cooldown
+        if (penState.shouldRejectTouch) return true;
+        // Only block finger page turns if user explicitly turned OFF Smart S-Pen-Only mode ("Vẽ cả bằng tay")
+        if (penState.active && !penState.sPenOnly) return true;
+        return false;
+      }
+      // For mouse / synthetic clicks: suppress right after S Pen strokes or when manual draw-all is active
+      if (penState.shouldSuppressTap) return true;
+      if (penState.active && !penState.sPenOnly) return true;
+      return false;
+    }
+
+    abortTouchGesture() {
+      this._abortActiveTouch?.();
+    }
+
+    isPalmTouchContact(touch) {
+      if (!touch) return false;
+      if (touch.touchType === 'stylus') return true;
+      const rx = Number(touch.radiusX || 0);
+      const ry = Number(touch.radiusY || 0);
+      if (rx > 23 || ry > 23 || rx * ry > 420) return true;
+      return false;
     }
 
     getTurnEffect() {
@@ -207,7 +228,7 @@
     }
 
     bindEvents() {
-      // Interactive Touch Gesture Engine (Live 1:1 Finger-Tracking Apple Curl & Smooth Slide)
+      // Interactive Finger-Tracking Gesture Engine (1:1 Apple Curl & Slide + Multi-Layer S Pen Palm Rejection)
       let startX = 0;
       let startY = 0;
       let lastX = 0;
@@ -217,99 +238,122 @@
       let pointerActive = false;
       let gestureMode = 'undecided'; // 'undecided' | 'horizontal' | 'vertical'
       let dragDir = null;
+      let lastPalmPointerAt = 0;
+      let lastNativeTouchAt = 0;
+      let lastTouchEnd = 0;
+      let touchPtrId = null;
 
-      this.stageEl.addEventListener(
-        'touchstart',
-        (e) => {
-          if (this.isPenBlockingInput(true)) return;
-          if (e.touches.length !== 1) return;
-          if (this.turnSession?.animating) {
-            this.forceCompleteTurnSession();
-          }
-          pointerActive = true;
+      this._abortActiveTouch = () => {
+        if (pointerActive || this.turnSession) {
+          pointerActive = false;
+          touchPtrId = null;
           gestureMode = 'undecided';
           dragDir = null;
-          startX = lastX = e.touches[0].clientX;
-          startY = e.touches[0].clientY;
-          startTime = lastMoveTime = Date.now();
-          velocityX = 0;
-        },
-        { passive: true }
-      );
+          this.cancelTurnSessionImmediate();
+        }
+      };
 
+      // Detect wide palm patches via W3C PointerEvent contact geometry (width/height in CSS px)
       this.stageEl.addEventListener(
-        'touchmove',
+        'pointerdown',
         (e) => {
-          if (!pointerActive || e.touches.length !== 1) return;
-          if (this.isPenBlockingInput(true)) return;
-          if (this.isScrollMode() || !this.epub) return;
-
-          const curX = e.touches[0].clientX;
-          const curY = e.touches[0].clientY;
-          const dx = curX - startX;
-          const dy = curY - startY;
-
-          // Respect active text selection (long press)
-          const selStr = window.getSelection()?.toString();
-          if (selStr && selStr.trim().length > 0) {
-            pointerActive = false;
-            this.cancelTurnSessionImmediate();
+          if (e.pointerType === 'pen') {
+            this._abortActiveTouch();
             return;
           }
-
-          const getStageYRatio = (clientY) => {
-            const rect = this.stageEl.getBoundingClientRect();
-            return Math.max(0.12, Math.min(0.88, (clientY - rect.top) / Math.max(1, rect.height)));
-          };
-
-          if (gestureMode === 'undecided') {
-            if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-            if (Math.abs(dx) > Math.abs(dy) * 1.15) {
-              gestureMode = 'horizontal';
-              dragDir = dx < 0 ? 'next' : 'prev';
-              const eff = this.getTurnEffect();
-              if (eff === 'curl' || eff === 'slide') {
-                this.beginInteractiveTurn(dragDir, eff, getStageYRatio(curY));
-              }
-            } else {
-              gestureMode = 'vertical';
-              return;
-            }
-          }
-
-          if (gestureMode !== 'horizontal') return;
-
-          const now = Date.now();
-          const dt = Math.max(1, now - lastMoveTime);
-          velocityX = (curX - lastX) / dt; // px/ms
-          lastX = curX;
-          lastMoveTime = now;
-
-          const eff = this.getTurnEffect();
-          if ((eff === 'curl' || eff === 'slide') && this.turnSession) {
-            e.preventDefault();
-            const stageW = Math.max(1, this.stageEl.getBoundingClientRect().width);
-            if (eff === 'curl') {
-              const rawP = dragDir === 'next' ? -dx / stageW : dx / stageW;
-              this.updateCurlProgress(Math.max(0, Math.min(1, rawP)), getStageYRatio(curY));
-            } else {
-              this.updateSlideDrag(dx);
+          if (e.pointerType === 'touch') {
+            const pw = Number(e.width || 0);
+            const ph = Number(e.height || 0);
+            if (pw > 44 || ph > 44 || pw * ph > 1400) {
+              lastPalmPointerAt = Date.now();
+              this._abortActiveTouch();
             }
           }
         },
-        { passive: false }
+        { capture: true }
       );
 
-      const handleTouchFinish = (e, cancelled = false) => {
+      const beginFingerGesture = (clientX, clientY) => {
+        if (this.turnSession?.animating) {
+          this.forceCompleteTurnSession();
+        }
+        pointerActive = true;
+        gestureMode = 'undecided';
+        dragDir = null;
+        startX = lastX = clientX;
+        startY = clientY;
+        startTime = lastMoveTime = Date.now();
+        velocityX = 0;
+      };
+
+      const moveFingerGesture = (clientX, clientY, rawEvent) => {
         if (!pointerActive) return;
-        pointerActive = false;
-        if (this.isPenBlockingInput(true)) {
+        if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350) {
+          this._abortActiveTouch();
+          return;
+        }
+        if (this.isScrollMode() || !this.epub) return;
+
+        const dx = clientX - startX;
+        const dy = clientY - startY;
+
+        // Respect active text selection (long press)
+        const selStr = window.getSelection()?.toString();
+        if (selStr && selStr.trim().length > 0) {
+          pointerActive = false;
           this.cancelTurnSessionImmediate();
           return;
         }
-        const touch = e.changedTouches?.[0];
-        const endX = touch ? touch.clientX : lastX;
-        const endY = touch ? touch.clientY : startY;
+
+        const getStageYRatio = (cy) => {
+          const rect = this.stageEl.getBoundingClientRect();
+          return Math.max(0.12, Math.min(0.88, (cy - rect.top) / Math.max(1, rect.height)));
+        };
+
+        if (gestureMode === 'undecided') {
+          if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+          if (Math.abs(dx) > Math.abs(dy) * 1.15) {
+            gestureMode = 'horizontal';
+            dragDir = dx < 0 ? 'next' : 'prev';
+            const eff = this.getTurnEffect();
+            if (eff === 'curl' || eff === 'slide') {
+              this.beginInteractiveTurn(dragDir, eff, getStageYRatio(clientY));
+            }
+          } else {
+            gestureMode = 'vertical';
+            return;
+          }
+        }
+
+        if (gestureMode !== 'horizontal') return;
+
+        const now = Date.now();
+        const dt = Math.max(1, now - lastMoveTime);
+        velocityX = (clientX - lastX) / dt; // px/ms
+        lastX = clientX;
+        lastMoveTime = now;
+
+        const eff = this.getTurnEffect();
+        if ((eff === 'curl' || eff === 'slide') && this.turnSession) {
+          if (rawEvent?.cancelable) rawEvent.preventDefault();
+          const stageW = Math.max(1, this.stageEl.getBoundingClientRect().width);
+          if (eff === 'curl') {
+            const rawP = dragDir === 'next' ? -dx / stageW : dx / stageW;
+            this.updateCurlProgress(Math.max(0, Math.min(1, rawP)), getStageYRatio(clientY));
+          } else {
+            this.updateSlideDrag(dx);
+          }
+        }
+      };
+
+      const finishFingerGesture = (endX, endY, targetEl, cancelled = false) => {
+        if (!pointerActive) return;
+        pointerActive = false;
+        touchPtrId = null;
+        if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350) {
+          this.cancelTurnSessionImmediate();
+          return;
+        }
         const dx = endX - startX;
         const dy = endY - startY;
         const dt = Date.now() - startTime;
@@ -334,14 +378,83 @@
 
         this.cancelTurnSessionImmediate();
 
-        // Quick tap
+        // Quick finger tap
         if (!cancelled && Math.abs(dx) < 14 && Math.abs(dy) < 14 && dt < 340) {
-          this.handleTap(endX, endY, e.target);
+          this.handleTap(endX, endY, targetEl);
         }
+      };
+
+      this.stageEl.addEventListener(
+        'touchstart',
+        (e) => {
+          lastNativeTouchAt = Date.now();
+          if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350) {
+            this._abortActiveTouch();
+            return;
+          }
+          if (e.touches.length !== 1) {
+            // Multi-point contact (e.g. resting palm + fingers) -> abort accidental turn
+            this._abortActiveTouch();
+            return;
+          }
+          if (this.isPalmTouchContact(e.touches[0])) {
+            lastPalmPointerAt = Date.now();
+            this._abortActiveTouch();
+            return;
+          }
+          beginFingerGesture(e.touches[0].clientX, e.touches[0].clientY);
+        },
+        { passive: true }
+      );
+
+      this.stageEl.addEventListener(
+        'touchmove',
+        (e) => {
+          lastNativeTouchAt = Date.now();
+          if (!pointerActive) return;
+          if (e.touches.length !== 1 || this.isPalmTouchContact(e.touches[0])) {
+            this._abortActiveTouch();
+            return;
+          }
+          moveFingerGesture(e.touches[0].clientX, e.touches[0].clientY, e);
+        },
+        { passive: false }
+      );
+
+      const handleTouchFinish = (e, cancelled = false) => {
+        lastNativeTouchAt = Date.now();
+        const touch = e.changedTouches?.[0];
+        const endX = touch ? touch.clientX : lastX;
+        const endY = touch ? touch.clientY : startY;
+        finishFingerGesture(endX, endY, e.target, cancelled);
       };
 
       this.stageEl.addEventListener('touchend', (e) => handleTouchFinish(e, false), { passive: true });
       this.stageEl.addEventListener('touchcancel', (e) => handleTouchFinish(e, true), { passive: true });
+
+      // PointerEvent finger fallback for Windows 2-in-1 Touchscreens (e.g. Galaxy Book5 360) if TouchEvents aren't emitted
+      this.stageEl.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'touch') return;
+        if (Date.now() - lastNativeTouchAt < 500) return;
+        if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350) return;
+        touchPtrId = e.pointerId;
+        beginFingerGesture(e.clientX, e.clientY);
+      });
+      window.addEventListener('pointermove', (e) => {
+        if (touchPtrId === null || e.pointerId !== touchPtrId || e.pointerType !== 'touch') return;
+        if (Date.now() - lastNativeTouchAt < 500) {
+          touchPtrId = null;
+          return;
+        }
+        moveFingerGesture(e.clientX, e.clientY, e);
+      });
+      const finishPointerTouch = (e, cancelled) => {
+        if (touchPtrId === null || e.pointerId !== touchPtrId) return;
+        lastTouchEnd = Date.now();
+        finishFingerGesture(e.clientX, e.clientY, e.target, cancelled);
+      };
+      window.addEventListener('pointerup', (e) => finishPointerTouch(e, false));
+      window.addEventListener('pointercancel', (e) => finishPointerTouch(e, true));
 
       // Desktop mouse edge-drag support for 3D Curl & Smooth Slide (without breaking middle text selection!)
       let mouseDrag = null;
@@ -414,7 +527,6 @@
       });
 
       // Mouse click on desktop (ignore if touch just fired or edge-drag just ran or pen drawing active)
-      let lastTouchEnd = 0;
       this.stageEl.addEventListener(
         'touchend',
         () => {
@@ -425,6 +537,7 @@
 
       this.stageEl.addEventListener('click', (e) => {
         if (suppressNextClick) return;
+        if (e.pointerType === 'pen') return;
         if (Date.now() - lastTouchEnd < 450) return;
         if (this.isPenBlockingInput(false)) return;
         this.handleTap(e.clientX, e.clientY, e.target);
@@ -663,6 +776,11 @@
       }
 
       if (this.isScrollMode()) {
+        const penState = this.cb.getPenState?.();
+        if (penState?.active) {
+          this.cb.collapsePenToolbar?.();
+          return;
+        }
         // In scroll mode, center tap toggles HUD
         this.setHudVisible(!this.hudVisible);
         return;
@@ -675,7 +793,12 @@
       } else if (relX >= 0.72) {
         this.nextPage(relY);
       } else {
-        this.setHudVisible(!this.hudVisible);
+        const penState = this.cb.getPenState?.();
+        if (penState?.active) {
+          this.cb.collapsePenToolbar?.();
+        } else {
+          this.setHudVisible(!this.hudVisible);
+        }
       }
     }
 

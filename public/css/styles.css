@@ -3572,14 +3572,101 @@ html[data-theme='amoled'] .ink-canvas {
   mix-blend-mode: normal;
 }
 
-.ink-canvas.pen-active {
+/* Only intercept finger/mouse on canvas when user explicitly disables Smart S-Pen-Only mode */
+.ink-canvas.pen-active.draw-with-all {
   pointer-events: auto;
   touch-action: none;
   cursor: crosshair;
 }
 
-.ink-canvas.pen-active.spen-only {
-  touch-action: pan-x pan-y;
+/* When S Pen nib hovers near or touches the screen, lock browser pan/selection for silky 120Hz ink */
+.reader-stage.spen-in-range,
+.reader-stage.spen-in-range .page-mask,
+.reader-stage.spen-in-range .chapter-content {
+  touch-action: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: crosshair;
+}
+
+/* Non-Intrusive Floating S Pen Quick Pill (Zero-Mode Note Taking + Page Turning) */
+.spen-quick-pill {
+  position: fixed;
+  right: max(12px, calc(10px + env(safe-area-inset-right)));
+  bottom: calc(32px + env(safe-area-inset-bottom));
+  z-index: 145;
+  height: 36px;
+  padding: 3px 5px 3px 9px;
+  border-radius: var(--radius-pill);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  box-shadow: var(--md-elevation-2);
+  transition: opacity 240ms ease, transform 220ms var(--ease-apple);
+}
+
+.spen-quick-pill.idle-dim {
+  opacity: 0.56;
+}
+
+.spen-quick-pill:hover,
+.spen-quick-pill:focus-within {
+  opacity: 1;
+}
+
+.spen-pill-main {
+  height: 30px;
+  padding: 0 7px 0 3px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.spen-pill-main:hover {
+  background: var(--surface);
+}
+
+.spen-pill-color-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(128, 128, 128, 0.45);
+  flex-shrink: 0;
+}
+
+.spen-pill-icon {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+
+.spen-pill-icon:hover {
+  background: var(--surface);
+}
+
+.spen-pill-icon.active {
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+}
+
+.spen-pill-icon:disabled {
+  opacity: 0.34;
+  pointer-events: none;
 }
 
 .pen-toolbar {
