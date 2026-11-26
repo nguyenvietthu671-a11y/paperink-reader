@@ -6107,3 +6107,214 @@ html[data-theme='amoled'] .curl-stage.dir-prev .curl-flap-back {
     scroll-behavior: auto !important;
   }
 }
+
+/* ==================== STICKER 2 MODES: OVERLAY vs PUSH SÁCH (INLINE SLOT) ==================== */
+.edit-banner-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+}
+
+.banner-sticker-mode-seg {
+  background: rgba(255, 255, 255, 0.48);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 2px;
+  border-radius: 999px;
+}
+
+html[data-theme='dark'] .banner-sticker-mode-seg,
+html[data-theme='amoled'] .banner-sticker-mode-seg {
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.banner-sticker-mode-seg .seg-opt {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 5px 11px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.inspector-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.insp-mode-label {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.insp-mode-seg {
+  flex: 1 1 240px;
+}
+
+.insp-mode-seg .seg-opt {
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+/* Inline shelf slot occupied by a Push-mode sticker (pushes books aside, zero overlap!) */
+.shelf-sticker-slot {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  min-width: 0;
+  min-height: 96px;
+  padding-bottom: 8px;
+  border-radius: 12px;
+  transition: background 160ms ease, outline-color 160ms ease;
+}
+
+.library-view.edit-stickers-mode .shelf-sticker-slot {
+  background: rgba(11, 87, 208, 0.06);
+  outline: 1.5px dashed rgba(11, 87, 208, 0.34);
+  outline-offset: -2px;
+}
+
+.placed-sticker.placed-sticker-push {
+  position: relative;
+  left: auto !important;
+  bottom: auto !important;
+  max-width: 100%;
+  z-index: 6;
+}
+
+.shelf-empty-slot {
+  min-width: 0;
+  pointer-events: none;
+}
+
+.shelf-sticker-caption {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.push-slot-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 8px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: var(--accent-soft);
+  color: var(--accent);
+  letter-spacing: 0.01em;
+}
+
+/* Live drop-slot indicator while dragging a Push-mode sticker */
+.wooden-shelf-items > [data-col-idx].push-drop-preview {
+  outline: 2.5px solid var(--accent) !important;
+  outline-offset: 3px;
+  background: rgba(11, 87, 208, 0.12);
+  border-radius: 10px;
+}
+
+/* ==================== GOODREADS DESCRIPTIONS, BADGES & SERIES OVERVIEW ==================== */
+.book-info-desc {
+  white-space: pre-line;
+  line-height: 1.64;
+  font-size: 0.9rem;
+  color: var(--ink);
+  margin: 0;
+}
+
+.goodreads-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  background: rgba(190, 128, 34, 0.14);
+  color: #946010;
+  border: 1px solid rgba(190, 128, 34, 0.28);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+  line-height: 1.25;
+}
+
+html[data-theme='dark'] .goodreads-pill,
+html[data-theme='amoled'] .goodreads-pill,
+.library-view.wp-dark .goodreads-pill {
+  background: rgba(245, 189, 86, 0.16);
+  color: #f6c96b;
+  border-color: rgba(245, 189, 86, 0.3);
+}
+
+a.goodreads-pill:hover {
+  filter: brightness(1.06);
+  text-decoration: underline;
+}
+
+.col-series-desc {
+  margin: 6px 0 2px;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--ink-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.series-shelf-overview {
+  margin: 4px 0 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.series-overview-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.series-overview-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.series-overview-text {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.58;
+  color: var(--ink);
+  white-space: pre-line;
+}
+
+.series-overview-text.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.series-overview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+

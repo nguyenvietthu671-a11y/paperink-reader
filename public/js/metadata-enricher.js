@@ -818,8 +818,8 @@
     return c === t || c.startsWith(`${t} `) || t.startsWith(`${c} `);
   }
 
-  // Online Auto-Enrichment (Apple Books + Open Library + Google Books, CORS *, zero API key needed)
-  async function enrichBookOnline(book) {
+  // Online Auto-Enrichment (Goodreads via PC Server first, fallback to Apple Books + Open Library + Google Books)
+  async function enrichBookOnline(book, options = {}) {
     const base = analyzeBookMetadata({
       title: book.title,
       author: book.author,
@@ -831,6 +831,52 @@
       language: book.language,
       size: book.size,
     });
+
+    // 0. Try Goodreads via PaperInk Server API if reachable
+    if (options.serverBase !== false) {
+      try {
+        const prefix = typeof options.serverBase === 'string' && options.serverBase ? options.serverBase.replace(/\/+$/, '') : '.';
+        const grParams = new URLSearchParams({
+          title: base.title || book.title || '',
+          author: base.author || book.author || '',
+          bookId: book.id || '',
+          force: options.force ? '1' : '0',
+        });
+        const grRes = await fetchJsonWithTimeout(`${prefix}/api/goodreads/book?${grParams.toString()}`, 9500);
+        if (grRes?.ok && grRes.result) {
+          const gr = grRes.result;
+          const grAuthor = (!isUnknownAuthor(base.author) ? base.author : normalizeAuthor(gr.author)) || 'Unknown Author';
+          const grSeries = cleanSeriesName(gr.series || base.series || '', grAuthor);
+          const grIdx = gr.seriesIndex ?? base.seriesIndex ?? null;
+          const grDesc = (gr.description && gr.description.length >= 60 ? gr.description : base.description) || '';
+          const { genres, tags } = inferGenresAndTags({
+            title: base.title,
+            author: grAuthor,
+            description: grDesc,
+            subjects: [...(gr.genres || []), ...(base.genres || [])],
+            series: grSeries,
+            language: base.language,
+            size: book.size || 0,
+          });
+          if (grDesc.length >= 60 || gr.goodreadsUrl) {
+            return {
+              title: base.title,
+              author: grAuthor,
+              series: grSeries,
+              seriesIndex: grIdx,
+              genres: gr.genres?.length ? gr.genres : genres,
+              tags,
+              description: grDesc,
+              goodreadsRating: gr.goodreadsRating || null,
+              goodreadsUrl: gr.goodreadsUrl || null,
+              descSource: gr.source || 'goodreads',
+              language: base.language || 'en',
+              enrichedOnline: true,
+            };
+          }
+        }
+      } catch (_) {}
+    }
 
     const queryTitle = (base.title || '').replace(/\s*[:(\[].*$/, '').trim();
     if (!queryTitle || queryTitle.length < 2) return base;
@@ -1101,10 +1147,38 @@
     };
   }
 
-  async function enrichSeriesOnline(seriesName, books = []) {
+  async function enrichSeriesOnline(seriesName, books = [], options = {}) {
     const base = synthesizeSeriesOverview(seriesName, books);
     const cleanName = String(seriesName || '').trim();
     if (!cleanName) return { ...base, enrichedOnline: false };
+
+    // 0. Try Goodreads Series endpoint via PaperInk Server first
+    if (options.serverBase !== false) {
+      try {
+        const prefix = typeof options.serverBase === 'string' && options.serverBase ? options.serverBase.replace(/\/+$/, '') : '.';
+        const grParams = new URLSearchParams({
+          series: cleanName,
+          author: !isUnknownAuthor(base.author) ? base.author : '',
+          force: options.force ? '1' : '0',
+        });
+        const grRes = await fetchJsonWithTimeout(`${prefix}/api/goodreads/series?${grParams.toString()}`, 10500);
+        if (grRes?.ok && grRes.result?.description) {
+          const gr = grRes.result;
+          return {
+            series: cleanName,
+            name: cleanName,
+            author: gr.author || base.author,
+            subtitle: gr.subtitle || '',
+            seriesUrl: gr.seriesUrl || '',
+            genres: Array.isArray(gr.genres) && gr.genres.length ? gr.genres : base.genres,
+            tags: Array.isArray(gr.tags) && gr.tags.length ? gr.tags : base.tags,
+            description: gr.description,
+            source: gr.source || 'goodreads',
+            enrichedOnline: true,
+          };
+        }
+      } catch (_) {}
+    }
 
     const isVi = /[ăâđêôơưàáảãạèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵ]/i.test(cleanName) || base.tags.includes('Tiếng Việt');
     const authorLast = !isUnknownAuthor(base.author)

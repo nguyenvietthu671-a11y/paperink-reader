@@ -257,7 +257,8 @@
     bgAmbient: true,
     bgBlur: 0,
     bgDim: 0,
-    placedStickers: [], // Freeform draggable stickers: { id, stickerId, shelfIndex, xPct, yOffset, scale, rotate, flipX }
+    defaultStickerMode: 'overlay', // 'overlay' (floating over books) | 'push' (inline slot pushing books aside)
+    placedStickers: [], // { id, stickerId, mode: 'overlay'|'push', slotIndex, shelfIndex, xPct, yOffset, scale, rotate, flipX }
     scopedWallpapers: {}, // Map of scopeKey -> { scopeKey, scopeType, scopeValue, label, bgMode, bgColor, bgPreset, bgAmbient, bgBlur, bgDim, updatedAt, removed? }
     lampLit: true,
     updatedAt: 0,

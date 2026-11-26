@@ -114,7 +114,13 @@
       <!-- Edit Stickers Mode Floating Banner -->
       <div id="edit-shelf-banner" class="lib-container edit-shelf-banner hidden">
         <div class="edit-banner-pill glass-chrome">
-          <span class="edit-banner-text">Kéo sticker tới bất kỳ vị trí nào trên kệ</span>
+          <div class="edit-banner-top">
+            <span id="edit-banner-hint" class="edit-banner-text">Kéo sticker tới vị trí bất kỳ trên kệ</span>
+            <div class="ios-segmented compact banner-sticker-mode-seg" role="radiogroup" aria-label="Chế độ sắp xếp sticker">
+              <button class="seg-opt banner-mode-btn active" data-banner-sticker-mode="overlay" type="button" title="Đặt tự do (Overlay) — có thể chồng lên sách">Đè lên (Overlay)</button>
+              <button class="seg-opt banner-mode-btn" data-banner-sticker-mode="push" type="button" title="Đẩy sách sang bên (Not Overlay) — chiếm ô riêng trên kệ">Đẩy sách (Không đè)</button>
+            </div>
+          </div>
           <div class="edit-banner-btns">
             <button class="mini-pill-btn" id="banner-upload-sticker-btn" type="button">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -208,6 +214,9 @@
             <div id="folders-strip" class="folders-strip"></div>
           </div>
 
+          <!-- Series Overview & Goodreads Description Card (visible inside a Series shelf) -->
+          <div id="series-shelf-overview" class="series-shelf-overview glass-card hidden"></div>
+
           <!-- Tactile Wooden Bookshelf / Grid / List -->
           <div id="books-container"></div>
           <div id="load-more-wrap" class="load-more-wrap hidden">
@@ -229,6 +238,13 @@
 
     <!-- Floating Sticker Inspector Dock (appears when a sticker is selected in Edit Mode!) -->
     <div id="sticker-inspector" class="sticker-inspector glass-chrome hidden" role="toolbar" aria-label="Chỉnh sửa sticker đang chọn">
+      <div class="inspector-mode-row">
+        <span class="insp-mode-label">Chế độ đặt:</span>
+        <div class="ios-segmented compact insp-mode-seg" role="radiogroup" aria-label="Chế độ đặt sticker">
+          <button class="seg-opt insp-mode-btn active" data-sticker-mode="overlay" type="button" title="Đè lên trên (Overlay) — kéo tự do mọi vị trí">Đè lên (Overlay)</button>
+          <button class="seg-opt insp-mode-btn" data-sticker-mode="push" type="button" title="Đẩy sách sang bên (Not Overlay) — đứng riêng 1 ô trên kệ gỗ">Đẩy sách (Không đè)</button>
+        </div>
+      </div>
       <div class="inspector-sliders">
         <label class="insp-slider-col">
           <span>Cỡ</span>
@@ -635,6 +651,10 @@
           <div><strong>Khôi phục bản sao lưu (.json)</strong><span>Chuyển tiến độ &amp; ghi chú sang thiết bị khác</span></div>
         </button>
         <input type="file" id="import-backup-input" accept=".json,application/json" hidden />
+        <button class="inset-action-row" id="more-goodreads-enrich-btn" type="button">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6"/><path d="M9 11h6"/></svg>
+          <div><strong>Cập nhật mô tả Goodreads (Tất cả sách &amp; bộ)</strong><span>Tự động tìm &amp; đồng bộ toàn bộ description, điểm sao &amp; bộ truyện từ Goodreads</span></div>
+        </button>
         <button class="inset-action-row" id="more-rescan-btn" type="button">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
           <div><strong>Quét lại kho sách trên PC</strong><span>Cập nhật sách mới thêm vào thư mục kindle</span></div>

@@ -10,6 +10,7 @@ const { StateStore } = require('./lib/state');
 const { DictionaryService } = require('./lib/dictionary');
 const { ServerCloudSync } = require('./lib/cloud-sync');
 const { AuthManager } = require('./lib/auth');
+const { GoodreadsService, canonicalSeriesKey } = require('./lib/goodreads');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -160,6 +161,7 @@ async function main() {
   const dictService = new DictionaryService(DATA_DIR);
   const cloudSync = new ServerCloudSync(DATA_DIR, stateStore);
   const authManager = new AuthManager(DATA_DIR);
+  const goodreads = new GoodreadsService(DATA_DIR);
 
   await Promise.all([
     library.init(),
@@ -167,6 +169,7 @@ async function main() {
     dictService.init(),
     cloudSync.init(),
     authManager.init(),
+    goodreads.init(),
   ]);
 
   // Watch PC books folder so newly copied/downloaded EPUBs auto-sync into Online library
@@ -308,6 +311,102 @@ async function main() {
           count: library.books.length,
           books: library.getPublicList(),
         });
+        return;
+      }
+
+      // API: Single Book Goodreads Description & Metadata Lookup
+      if (req.method === 'GET' && pathname === '/api/goodreads/book') {
+        const title = urlObj.searchParams.get('title') || '';
+        const author = urlObj.searchParams.get('author') || '';
+        const bookId = urlObj.searchParams.get('bookId') || '';
+        const force = urlObj.searchParams.get('force') === '1';
+
+        const result = await goodreads.lookupBook({
+          title,
+          author,
+          needFullDescription: true,
+          forceRefresh: force,
+        });
+
+        if (result && bookId && library.getBook(bookId)) {
+          const changed = library.updateBookMetadata(bookId, {
+            description: result.description || '',
+            series: result.series || '',
+            seriesIndex: result.seriesIndex ?? null,
+            genres: result.genres || [],
+            goodreadsRating: result.goodreadsRating || null,
+            goodreadsUrl: result.goodreadsUrl || null,
+            descSource: result.source || 'goodreads',
+          });
+          if (changed) {
+            library.saveIndex().catch(() => {});
+          }
+        }
+
+        sendJson(res, 200, { ok: Boolean(result), result: result || null });
+        return;
+      }
+
+      // API: Single Series Goodreads Description & Metadata Lookup
+      if (req.method === 'GET' && pathname === '/api/goodreads/series') {
+        const series = urlObj.searchParams.get('series') || '';
+        const author = urlObj.searchParams.get('author') || '';
+        const force = urlObj.searchParams.get('force') === '1';
+        const sKey = canonicalSeriesKey(series);
+        const sBooks = library.books.filter((b) => b.series && canonicalSeriesKey(b.series) === sKey);
+
+        const result = await goodreads.lookupSeries({
+          seriesName: series,
+          author,
+          books: sBooks,
+          forceRefresh: force,
+        });
+
+        if (result && result.description && sKey) {
+          const existing = stateStore.state.seriesMeta?.[sKey];
+          if (!existing?.manual || force) {
+            if (!stateStore.state.seriesMeta) stateStore.state.seriesMeta = {};
+            stateStore.state.seriesMeta[sKey] = {
+              name: series,
+              subtitle: result.subtitle || '',
+              seriesUrl: result.seriesUrl || '',
+              genres: result.genres,
+              tags: result.tags,
+              description: result.description,
+              source: result.source || 'goodreads',
+              enrichedOnline: true,
+              manual: false,
+              updatedAt: Date.now(),
+            };
+            stateStore.scheduleSave();
+            cloudSync.syncPush().catch(() => {});
+          }
+        }
+
+        sendJson(res, 200, { ok: Boolean(result), result: result || null });
+        return;
+      }
+
+      // API: Batch Enrich All Books & Series from Goodreads
+      if (req.method === 'POST' && pathname === '/api/library/enrich-all') {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const status = await goodreads.enrichLibraryAll(library, stateStore, {
+          forceAllBooks: Boolean(body?.forceAllBooks),
+        });
+        cloudSync.syncPush().catch(() => {});
+        sendJson(res, 200, {
+          ok: true,
+          status,
+          count: library.books.length,
+          books: library.getPublicList(),
+          state: stateStore.getState(),
+        });
+        return;
+      }
+
+      // API: Goodreads Batch Enrich Status
+      if (req.method === 'GET' && pathname === '/api/library/enrich-status') {
+        sendJson(res, 200, goodreads.getStatus());
         return;
       }
 
@@ -498,6 +597,29 @@ async function main() {
     }
     console.log('=======================================================');
     console.log('');
+
+    // Background Goodreads enrichment for any books or series missing descriptions
+    const hasMissingBooks = library.books.some((b) => !b.description || b.description.trim().length < 140);
+    const allSeriesKeys = new Set(
+      library.books
+        .map((b) => (b.series ? canonicalSeriesKey(b.series) : ''))
+        .filter(Boolean)
+    );
+    const hasMissingSeries = Array.from(allSeriesKeys).some(
+      (k) => !stateStore.state.seriesMeta?.[k]?.description
+    );
+    if (hasMissingBooks || hasMissingSeries) {
+      console.log('[PaperInk] Background Goodreads enrichment starting for books & series...');
+      goodreads
+        .enrichLibraryAll(library, stateStore)
+        .then((st) => {
+          console.log(
+            `[PaperInk] Goodreads enrichment complete: ${st.updatedBooks} books & ${st.updatedSeries} series updated.`
+          );
+          return cloudSync.syncPush();
+        })
+        .catch(() => {});
+    }
   });
 }
 

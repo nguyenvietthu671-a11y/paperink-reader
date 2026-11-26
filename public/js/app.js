@@ -497,7 +497,20 @@
     normalizeShelfConfig(raw) {
       const def = window.PaperInkShelfDecor?.DEFAULT_SHELF_CONFIG || {};
       const merged = { ...structuredClone(def), ...(raw || {}) };
-      if (!Array.isArray(merged.placedStickers)) merged.placedStickers = [];
+      if (merged.defaultStickerMode !== 'push') {
+        merged.defaultStickerMode = 'overlay';
+      }
+      if (!Array.isArray(merged.placedStickers)) {
+        merged.placedStickers = [];
+      } else {
+        merged.placedStickers = merged.placedStickers
+          .filter((st) => st && typeof st === 'object' && st.id && st.stickerId)
+          .map((st) => ({
+            ...st,
+            mode: st.mode === 'push' ? 'push' : 'overlay',
+            slotIndex: typeof st.slotIndex === 'number' && !Number.isNaN(st.slotIndex) ? st.slotIndex : null,
+          }));
+      }
       if (!merged.bgMode || !['color', 'preset', 'image'].includes(merged.bgMode)) {
         merged.bgMode = 'color';
       }
@@ -1948,6 +1961,9 @@
         if (Array.isArray(ov.genres) && ov.genres.length) merged.genres = ov.genres;
         if (Array.isArray(ov.tags)) merged.tags = ov.tags;
         if (typeof ov.description === 'string' && ov.description.trim()) merged.description = ov.description.trim();
+        if (ov.goodreadsRating) merged.goodreadsRating = ov.goodreadsRating;
+        if (ov.goodreadsUrl) merged.goodreadsUrl = ov.goodreadsUrl;
+        if (ov.descSource) merged.descSource = ov.descSource;
         merged.autoTaggedAt = ov.updatedAt || 0;
       }
 
@@ -2586,6 +2602,9 @@
       // Render custom folders strip on home shelf
       this.renderFoldersStrip(all);
 
+      // Render Series Goodreads Overview Card when inside a Series shelf
+      this.renderSeriesShelfOverview(scoped);
+
       const readingBooks = scoped
         .filter((b) => b.progress && b.progress.updatedAt)
         .sort((a, b) => (b.progress.updatedAt || 0) - (a.progress.updatedAt || 0));
@@ -2764,13 +2783,67 @@
       return null;
     }
 
+    renderSeriesShelfOverview(scopedBooks) {
+      const box = document.getElementById('series-shelf-overview');
+      if (!box) return;
+      const show =
+        this.drilldown?.type === 'series' &&
+        !this.editStickersMode &&
+        !this.selectMode &&
+        !this.searchQuery &&
+        Array.isArray(scopedBooks) &&
+        scopedBooks.length > 0;
+      box.classList.toggle('hidden', !show);
+      if (!show) return;
+
+      const seriesName = this.drilldown.value;
+      const key = this.canonicalSeriesKey(seriesName);
+      if (key && !this.state.seriesMeta?.[key] && !this.enrichingSeriesKeys.has(key)) {
+        this.autoEnrichSeries(seriesName, { silent: true });
+      }
+
+      const profile = this.getSeriesProfile(seriesName, scopedBooks);
+      const desc = (profile.description || '').trim();
+      const isExpanded = this.expandedSeriesOverviewKey === key;
+      const isLong = desc.length > 260 || desc.includes('\n');
+      const genresHtml = (profile.genres || [])
+        .slice(0, 3)
+        .map((g) => `<span class="col-genre-mini">${escHtml(g)}</span>`)
+        .join('');
+      const grBadge = profile.seriesUrl
+        ? `<a class="goodreads-pill" href="${escHtml(profile.seriesUrl)}" target="_blank" rel="noopener noreferrer" title="Mở trang bộ truyện trên Goodreads">Goodreads${profile.subtitle ? ` · ${escHtml(profile.subtitle.split('•')[0].trim())}` : ''}</a>`
+        : profile.enrichedOnline
+        ? `<span class="goodreads-pill">Goodreads</span>`
+        : '';
+
+      box.innerHTML = `
+        <div class="series-overview-top">
+          <div class="series-overview-badges">
+            ${grBadge}
+            ${genresHtml}
+          </div>
+          <button class="inline-series-info-link" data-open-series-info="${escHtml(seriesName)}" type="button">Chi tiết &amp; Sửa bộ truyện</button>
+        </div>
+        ${
+          desc
+            ? `<p class="series-overview-text ${isLong && !isExpanded ? 'clamped' : ''}">${escHtml(desc)}</p>`
+            : `<p class="muted-text" style="margin:0;font-size:0.83rem">Đang tải mô tả bộ truyện từ Goodreads…</p>`
+        }
+        ${
+          isLong
+            ? `<div class="series-overview-actions">
+                 <button class="inline-series-info-link" data-toggle-series-overview="${escHtml(key)}" type="button">${
+                   isExpanded ? 'Thu gọn mô tả' : 'Xem toàn bộ mô tả'
+                 }</button>
+               </div>`
+            : ''
+        }
+      `;
+    }
+
     renderWoodenShelves(books) {
       const cfg = this.state.shelfConfig;
-      const cols = this.computeShelfCols();
-      const rows = [];
-      for (let i = 0; i < books.length; i += cols) {
-        rows.push(books.slice(i, i + cols));
-      }
+      const cols = Math.max(1, this.computeShelfCols());
 
       const showSeriesBadge =
         this.route === 'series' || this.drilldown?.type === 'series' || this.sortBy === 'series';
@@ -2780,15 +2853,139 @@
       if (allLackSeriesIdx) {
         books.forEach((b, idx) => indexFallbackMap.set(b.id, idx + 1));
       }
-      const placed = Array.isArray(cfg.placedStickers) ? cfg.placedStickers : [];
 
-      return rows
-        .map((rowBooks, tierIdx) => {
-          const cellsHtml = rowBooks
-            .map((b) => this.renderShelfBook(b, showSeriesBadge, indexFallbackMap.get(b.id) ?? null))
+      const placed = Array.isArray(cfg.placedStickers) ? cfg.placedStickers : [];
+      const pushStickers = placed.filter((st) => st.mode === 'push' && this.renderStickerContent(st.stickerId));
+      const overlayStickers = placed.filter((st) => st.mode !== 'push');
+
+      // Build sequential shelf tiers interleaving Push-mode stickers into real column slots (pushing books right & down!)
+      const maxNaturalTier = Math.max(0, Math.ceil((books.length + pushStickers.length) / cols));
+      const pushByTier = new Map();
+      for (const st of pushStickers) {
+        const tIdx = Math.max(0, Math.min(maxNaturalTier, st.shelfIndex || 0));
+        if (!pushByTier.has(tIdx)) pushByTier.set(tIdx, []);
+        pushByTier.get(tIdx).push(st);
+      }
+      for (const arr of pushByTier.values()) {
+        arr.sort((a, b) => (a.slotIndex ?? 0) - (b.slotIndex ?? 0));
+      }
+
+      const tiers = [];
+      let bookCursor = 0;
+      let overflowPush = [];
+      let tIdx = 0;
+
+      while (
+        (bookCursor < books.length || overflowPush.length > 0 || pushByTier.has(tIdx) || (tiers.length === 0 && placed.length > 0)) &&
+        tIdx < 250
+      ) {
+        const incomingPush = [...overflowPush, ...(pushByTier.get(tIdx) || [])];
+        pushByTier.delete(tIdx);
+        const tierPush = incomingPush.slice(0, cols);
+        overflowPush = incomingPush.slice(cols);
+
+        const slots = new Array(cols).fill(null);
+        for (const st of tierPush) {
+          let desiredCol =
+            st.slotIndex != null && !Number.isNaN(Number(st.slotIndex))
+              ? Math.round(Number(st.slotIndex))
+              : Math.floor(((st.xPct ?? 50) / 100) * cols);
+          desiredCol = Math.max(0, Math.min(cols - 1, desiredCol));
+
+          let chosenCol = desiredCol;
+          if (slots[chosenCol] !== null) {
+            // Find nearest free slot on this shelf plank
+            let bestDist = Infinity;
+            for (let c = 0; c < cols; c++) {
+              if (slots[c] === null && Math.abs(c - desiredCol) < bestDist) {
+                bestDist = Math.abs(c - desiredCol);
+                chosenCol = c;
+              }
+            }
+          }
+          if (slots[chosenCol] === null) {
+            slots[chosenCol] = { kind: 'sticker', sticker: st, colIdx: chosenCol };
+          }
+        }
+
+        // Fill remaining open slots on this shelf plank with standing books (books get pushed cleanly!)
+        let lastActiveCol = -1;
+        for (let c = 0; c < cols; c++) {
+          if (slots[c] !== null) {
+            lastActiveCol = Math.max(lastActiveCol, c);
+            continue;
+          }
+          if (bookCursor < books.length) {
+            slots[c] = { kind: 'book', book: books[bookCursor++], colIdx: c };
+            lastActiveCol = Math.max(lastActiveCol, c);
+          }
+        }
+
+        const fillUntilCol = this.editStickersMode ? cols - 1 : lastActiveCol;
+        const finalCells = [];
+        for (let c = 0; c <= fillUntilCol; c++) {
+          finalCells.push(slots[c] || { kind: 'empty', colIdx: c });
+        }
+
+        tiers.push({ tierIdx: tIdx, cells: finalCells });
+        tIdx++;
+      }
+
+      const maxRenderedTier = Math.max(0, tiers.length - 1);
+
+      return tiers
+        .map(({ tierIdx, cells }) => {
+          const cellsHtml = cells
+            .map((cell) => {
+              if (cell.kind === 'book') {
+                return this.renderShelfBook(
+                  cell.book,
+                  showSeriesBadge,
+                  indexFallbackMap.get(cell.book.id) ?? null,
+                  cell.colIdx
+                );
+              }
+              if (cell.kind === 'sticker') {
+                const st = cell.sticker;
+                const asset = this.renderStickerContent(st.stickerId);
+                if (!asset) return `<div class="shelf-empty-slot" data-col-idx="${cell.colIdx}" aria-hidden="true"></div>`;
+                const isSelected = this.editStickersMode && this.selectedStickerId === st.id;
+                const isLampOff = asset.interactive === 'lamp' && !cfg.lampLit;
+                const scale = st.scale || 1;
+                const rot = st.rotate || 0;
+                const flip = st.flipX ? -1 : 1;
+                const w = Math.round(asset.baseWidth * scale);
+                const yOff = st.yOffset ?? 0;
+
+                return `
+                  <div class="shelf-sticker-slot ${isSelected ? 'selected' : ''}" data-col-idx="${cell.colIdx}">
+                    <div class="placed-sticker placed-sticker-push ${isSelected ? 'selected' : ''} ${isLampOff ? 'lamp-off' : ''}"
+                         data-placed-id="${escHtml(st.id)}"
+                         data-sticker-mode="push"
+                         data-slot-idx="${cell.colIdx}"
+                         data-interactive="${escHtml(asset.interactive || '')}"
+                         style="width:${w}px; transform:translateY(${-yOff}px) rotate(${rot}deg) scaleX(${flip});"
+                         title="${escHtml(asset.name)} — Chế độ Đẩy sách (không đè lên sách)">
+                      ${asset.html}
+                    </div>
+                  </div>
+                `;
+              }
+              return `<div class="shelf-empty-slot" data-col-idx="${cell.colIdx}" aria-hidden="true"></div>`;
+            })
             .join('');
-          const labelsHtml = rowBooks
-            .map((b) => {
+
+          const labelsHtml = cells
+            .map((cell) => {
+              if (cell.kind === 'sticker') {
+                return `<div class="shelf-sticker-caption" aria-hidden="true">${
+                  this.editStickersMode ? '<span class="push-slot-pill">Ô đẩy sách</span>' : ''
+                }</div>`;
+              }
+              if (cell.kind !== 'book') {
+                return `<div class="shelf-empty-slot" aria-hidden="true"></div>`;
+              }
+              const b = cell.book;
               const rev = this.getBookReview(b.id);
               const showRatingBar = this.shelfFilter === 'reading' || rev.rating > 0;
               const dispIdx = b.seriesIndex ?? indexFallbackMap.get(b.id) ?? null;
@@ -2815,8 +3012,10 @@
             })
             .join('');
 
-          // Freeform draggable stickers anchored to this shelf plank
-          const tierStickers = placed.filter((st) => (st.shelfIndex || 0) === tierIdx);
+          // Freeform Overlay-mode stickers anchored to this shelf plank
+          const tierStickers = overlayStickers.filter(
+            (st) => Math.max(0, Math.min(maxRenderedTier, st.shelfIndex || 0)) === tierIdx
+          );
           const stickersHtml = tierStickers
             .map((st) => {
               const asset = this.renderStickerContent(st.stickerId);
@@ -2833,9 +3032,10 @@
               return `
                 <div class="placed-sticker ${isSelected ? 'selected' : ''} ${isLampOff ? 'lamp-off' : ''}"
                      data-placed-id="${escHtml(st.id)}"
+                     data-sticker-mode="overlay"
                      data-interactive="${escHtml(asset.interactive || '')}"
                      style="left:${xPct}%; bottom:${8 + yOff}px; width:${w}px; transform:translateX(-50%) rotate(${rot}deg) scaleX(${flip});"
-                     title="${escHtml(asset.name)}${this.editStickersMode ? ' — kéo để di chuyển' : ''}">
+                     title="${escHtml(asset.name)}${this.editStickersMode ? ' — Chế độ Đè lên (Overlay)' : ''}">
                   ${asset.html}
                 </div>
               `;
@@ -2866,7 +3066,7 @@
         .join('');
     }
 
-    renderShelfBook(book, showSeriesBadge = false, fallbackIdx = null) {
+    renderShelfBook(book, showSeriesBadge = false, fallbackIdx = null, colIdx = null) {
       const pct = book.progress ? Math.round(book.progress.bookPercent || 0) : 0;
       const isDl = this.downloadingIds.has(book.id);
       const offlineBtnTitle = book.isOffline ? 'Đã lưu Offline (chạm để gỡ)' : 'Lưu đọc Offline';
@@ -2886,9 +3086,10 @@
       const isSel = this.selectedBookIds.has(book.id);
       const selectBadge = `<span class="book-select-badge" aria-hidden="true">${ICONS.check}</span>`;
       const moreInfoBtn = `<button class="cover-more-btn" data-open-book-info="${escHtml(book.id)}" type="button" title="Xem thông tin sách" aria-label="Xem thông tin sách ${escHtml(book.title)}">${ICONS.moreVert}</button>`;
+      const colAttr = colIdx != null ? ` data-col-idx="${colIdx}"` : '';
 
       return `
-        <article class="shelf-book ${isSel ? 'selected' : ''} ${hasSeriesBadge ? 'has-series-badge' : ''}" data-open-book="${escHtml(book.id)}" tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
+        <article class="shelf-book ${isSel ? 'selected' : ''} ${hasSeriesBadge ? 'has-series-badge' : ''}" data-open-book="${escHtml(book.id)}"${colAttr} tabindex="0" role="button" aria-label="Mở sách ${escHtml(book.title)}">
           <div class="shelf-book-stand">
             <div class="shelf-book-cover">
               ${this.renderCoverMarkup(book)}
@@ -3021,23 +3222,35 @@
       `;
     }
 
-    // ---- STICKER PLACEMENT & FREEFORM DRAG ENGINE ----
+    // ---- STICKER PLACEMENT & DUAL-MODE (OVERLAY vs PUSH SÁCH) DRAG ENGINE ----
     addStickerToShelf(stickerId) {
       const placed = [...(this.state.shelfConfig.placedStickers || [])];
-      // Ensure we are on a wooden shelf style so user immediately sees their sticker!
       const style = this.state.shelfConfig.shelfStyle || 'oak';
       const nextStyle = ['oak', 'walnut', 'birch', 'slate'].includes(style) ? style : 'oak';
+      const cols = Math.max(1, this.computeShelfCols());
+      const mode = this.state.shelfConfig.defaultStickerMode === 'push' ? 'push' : 'overlay';
 
-      // Pick a neat staggered xPct on Shelf 0 so multiple stickers don't stack on top of each other
       const sameTier = placed.filter((s) => (s.shelfIndex || 0) === 0);
       const slots = [14, 86, 50, 32, 68, 22, 78];
       const xPct = slots[sameTier.length % slots.length];
+      const usedPushCols = new Set(
+        sameTier.filter((s) => s.mode === 'push').map((s) => Number(s.slotIndex ?? 0))
+      );
+      let slotIndex = 0;
+      for (let c = 0; c < cols; c++) {
+        if (!usedPushCols.has(c)) {
+          slotIndex = c;
+          break;
+        }
+      }
 
       const newSticker = {
         id: uid('st'),
         stickerId,
+        mode,
+        slotIndex: mode === 'push' ? slotIndex : null,
         shelfIndex: 0,
-        xPct,
+        xPct: mode === 'push' ? Number((((slotIndex + 0.5) / cols) * 100).toFixed(2)) : xPct,
         yOffset: 0,
         scale: 1,
         rotate: 0,
@@ -3051,7 +3264,57 @@
       }
       this.updateShelfConfig({ shelfStyle: nextStyle, placedStickers: placed }, false);
       this.setEditStickersMode(true);
-      this.toast('Đã dán lên kệ — kéo thả sticker tới bất kỳ vị trí nào!');
+      this.toast(
+        mode === 'push'
+          ? 'Đã đặt sticker ở chế độ Đẩy sách — sách tự nhường ô, không bị đè!'
+          : 'Đã dán lên kệ (Overlay) — kéo thả tự do hoặc đổi sang Đẩy sách!'
+      );
+    }
+
+    setStickerPlacementMode(rawMode, { fromBanner = false } = {}) {
+      const nextMode = rawMode === 'push' ? 'push' : 'overlay';
+      const cols = Math.max(1, this.computeShelfCols());
+      const list = [...(this.state.shelfConfig.placedStickers || [])];
+      const selected = this.getSelectedSticker();
+
+      const applyModeToItem = (item) => {
+        if (nextMode === 'push') {
+          if (item.slotIndex == null || Number.isNaN(Number(item.slotIndex))) {
+            item.slotIndex = Math.max(0, Math.min(cols - 1, Math.floor(((item.xPct ?? 50) / 100) * cols)));
+          } else {
+            item.slotIndex = Math.max(0, Math.min(cols - 1, Math.round(Number(item.slotIndex))));
+          }
+          item.xPct = Number((((item.slotIndex + 0.5) / cols) * 100).toFixed(2));
+          item.yOffset = 0;
+          item.mode = 'push';
+        } else {
+          if (item.mode === 'push' && item.slotIndex != null) {
+            const c = Math.max(0, Math.min(cols - 1, Math.round(Number(item.slotIndex))));
+            item.xPct = Number((((c + 0.5) / cols) * 100).toFixed(2));
+          }
+          item.mode = 'overlay';
+        }
+      };
+
+      if (selected) {
+        const target = list.find((s) => s.id === selected.id);
+        if (target) applyModeToItem(target);
+      } else if (fromBanner && list.length > 0) {
+        for (const item of list) {
+          applyModeToItem(item);
+        }
+      }
+
+      this.updateShelfConfig({
+        defaultStickerMode: nextMode,
+        placedStickers: list,
+      });
+      this.updateStickerInspectorUI();
+      this.toast(
+        nextMode === 'push'
+          ? 'Chế độ Đẩy sách (Không đè): Sticker đứng riêng 1 ô và đẩy sách sang bên'
+          : 'Chế độ Đè lên (Overlay): Kéo thả sticker tự do trên kệ và sách'
+      );
     }
 
     updatePlacedSticker(id, patch, syncImmediate = false) {
@@ -3075,6 +3338,28 @@
     updateStickerInspectorUI() {
       const inspector = document.getElementById('sticker-inspector');
       const st = this.getSelectedSticker();
+      const activeMode = st
+        ? st.mode === 'push'
+          ? 'push'
+          : 'overlay'
+        : this.state.shelfConfig?.defaultStickerMode === 'push'
+        ? 'push'
+        : 'overlay';
+
+      // Sync top edit banner mode buttons & hint text
+      document.querySelectorAll('.banner-mode-btn[data-banner-sticker-mode]').forEach((btn) => {
+        const isAct = btn.dataset.bannerStickerMode === activeMode;
+        btn.classList.toggle('active', isAct);
+        btn.setAttribute('aria-checked', String(isAct));
+      });
+      const bannerHint = document.getElementById('edit-banner-hint');
+      if (bannerHint) {
+        bannerHint.textContent =
+          activeMode === 'push'
+            ? 'Đẩy sách: kéo sticker thả vào ô bất kỳ để đẩy sách sang bên'
+            : 'Đè lên (Overlay): kéo sticker tự do tới bất kỳ vị trí nào';
+      }
+
       if (!inspector) return;
       const show = this.editStickersMode && Boolean(st);
       inspector.classList.toggle('hidden', !show);
@@ -3083,6 +3368,11 @@
         const rot = document.getElementById('insp-rotate');
         if (sc) sc.value = String(st.scale ?? 1);
         if (rot) rot.value = String(st.rotate ?? 0);
+        inspector.querySelectorAll('.insp-mode-btn[data-sticker-mode]').forEach((btn) => {
+          const isAct = btn.dataset.stickerMode === (st.mode === 'push' ? 'push' : 'overlay');
+          btn.classList.toggle('active', isAct);
+          btn.setAttribute('aria-checked', String(isAct));
+        });
       }
     }
 
@@ -3091,9 +3381,20 @@
       if (!asset || !el) return;
       const w = Math.round(asset.baseWidth * (st.scale || 1));
       el.style.width = `${w}px`;
-      el.style.left = `${st.xPct}%`;
-      el.style.bottom = `${8 + (st.yOffset || 0)}px`;
-      el.style.transform = `translateX(-50%) rotate(${st.rotate || 0}deg) scaleX(${st.flipX ? -1 : 1})`;
+      if (st.mode === 'push') {
+        el.style.left = '';
+        el.style.bottom = '';
+        el.style.transform = `translateY(${-(st.yOffset || 0)}px) rotate(${st.rotate || 0}deg) scaleX(${st.flipX ? -1 : 1})`;
+      } else {
+        el.style.left = `${st.xPct}%`;
+        el.style.bottom = `${8 + (st.yOffset || 0)}px`;
+        el.style.transform = `translateX(-50%) rotate(${st.rotate || 0}deg) scaleX(${st.flipX ? -1 : 1})`;
+      }
+    }
+
+    clearPushDropPreviews() {
+      document.querySelectorAll('.push-drop-preview').forEach((el) => el.classList.remove('push-drop-preview'));
+      document.querySelectorAll('.wooden-shelf-tier.drop-target').forEach((t) => t.classList.remove('drop-target'));
     }
 
     handleStickerPointerDown(e, stickerEl) {
@@ -3115,14 +3416,19 @@
 
       if (this.editStickersMode) {
         this.selectedStickerId = id;
-        document.querySelectorAll('.placed-sticker.selected').forEach((n) => n.classList.remove('selected'));
+        document.querySelectorAll('.placed-sticker.selected, .shelf-sticker-slot.selected').forEach((n) =>
+          n.classList.remove('selected')
+        );
         stickerEl.classList.add('selected');
+        stickerEl.closest('.shelf-sticker-slot')?.classList.add('selected');
         this.updateStickerInspectorUI();
       }
 
       const stageEl = stickerEl.closest('.wooden-shelf-stage');
       if (!stageEl) return;
       const stageRect = stageEl.getBoundingClientRect();
+      const cols = Math.max(1, this.computeShelfCols());
+      const isPushMode = st.mode === 'push';
 
       stickerEl.setPointerCapture?.(e.pointerId);
       stickerEl.classList.add('dragging');
@@ -3132,6 +3438,8 @@
       const origXPct = st.xPct ?? 50;
       const origYOff = st.yOffset ?? 0;
       let moved = false;
+      let hoverTierIdx = st.shelfIndex || 0;
+      let hoverSlotIdx = st.slotIndex ?? 0;
 
       const onMove = (ev) => {
         const dx = ev.clientX - startX;
@@ -3148,6 +3456,32 @@
           document.getElementById('bottom-tabbar')?.classList.add('hidden');
           stickerEl.classList.add('selected');
           this.updateStickerInspectorUI();
+        }
+
+        if (isPushMode) {
+          // Smooth pointer-following lift + live target slot highlight
+          stickerEl.style.transform = `translate(${dx}px, ${dy}px) rotate(${st.rotate || 0}deg) scaleX(${
+            st.flipX ? -1 : 1
+          })`;
+          this.clearPushDropPreviews();
+          const tiers = Array.from(document.querySelectorAll('.wooden-shelf-tier'));
+          for (const t of tiers) {
+            const r = t.getBoundingClientRect();
+            if (ev.clientY >= r.top - 12 && ev.clientY <= r.bottom + 12) {
+              hoverTierIdx = parseInt(t.dataset.shelfTier, 10) || 0;
+              const itemsEl = t.querySelector('.wooden-shelf-items');
+              const ir = (itemsEl || t).getBoundingClientRect();
+              hoverSlotIdx = Math.max(
+                0,
+                Math.min(cols - 1, Math.floor(((ev.clientX - ir.left) / Math.max(1, ir.width)) * cols))
+              );
+              t.classList.add('drop-target');
+              const targetCell = itemsEl?.querySelector(`[data-col-idx="${hoverSlotIdx}"]`);
+              targetCell?.classList.add('push-drop-preview');
+              break;
+            }
+          }
+          return;
         }
 
         const nextXPct = Math.max(3, Math.min(97, origXPct + (dx / Math.max(1, stageRect.width)) * 100));
@@ -3179,12 +3513,9 @@
         stickerEl.removeEventListener('pointerup', onUp);
         stickerEl.removeEventListener('pointercancel', onUp);
         stickerEl.classList.remove('dragging');
-        document.querySelectorAll('.wooden-shelf-tier.drop-target').forEach((t) =>
-          t.classList.remove('drop-target')
-        );
+        this.clearPushDropPreviews();
 
         if (!moved) {
-          // Pure tap on lamp outside edit mode toggles ambient light
           if (!this.editStickersMode && stickerEl.dataset.interactive === 'lamp') {
             const nextLit = !this.state.shelfConfig.lampLit;
             this.updateShelfConfig({ lampLit: nextLit });
@@ -3192,7 +3523,24 @@
           return;
         }
 
-        // Check if dropped onto another shelf tier!
+        if (isPushMode) {
+          const nextXPct = Number((((hoverSlotIdx + 0.5) / cols) * 100).toFixed(2));
+          this.updatePlacedSticker(
+            id,
+            {
+              mode: 'push',
+              shelfIndex: hoverTierIdx,
+              slotIndex: hoverSlotIdx,
+              xPct: nextXPct,
+              yOffset: 0,
+            },
+            true
+          );
+          this.renderShelfPage();
+          return;
+        }
+
+        // Overlay mode: check if dropped onto another shelf tier!
         const tiers = Array.from(document.querySelectorAll('.wooden-shelf-tier'));
         let droppedTierIdx = st.shelfIndex || 0;
         let droppedStageRect = stageRect;
@@ -3206,7 +3554,6 @@
         }
 
         if (droppedTierIdx !== (st.shelfIndex || 0)) {
-          // Re-anchor cleanly onto the new shelf plank!
           const localXPct = Math.max(
             4,
             Math.min(96, ((ev.clientX - droppedStageRect.left) / Math.max(1, droppedStageRect.width)) * 100)
@@ -3218,7 +3565,6 @@
           );
           this.renderShelfPage();
         } else {
-          // Soft magnetic snap back to shelf plank if within ±14px of plank surface
           if (Math.abs(st.yOffset) <= 14) {
             st.yOffset = 0;
             this.applyLiveStickerTransform(stickerEl, st);
@@ -3375,10 +3721,13 @@
                 .map((gn) => `<span class="col-genre-mini">${escHtml(gn)}</span>`)
                 .join('')}</div>`
             : '';
+          const seriesDescPreview =
+            type === 'series' ? String(g.profile?.description || '').replace(/\s+/g, ' ').trim() : '';
           const progressMarkup =
             type === 'series'
               ? `
                 ${seriesGenresHtml}
+                ${seriesDescPreview ? `<p class="col-series-desc">${escHtml(seriesDescPreview)}</p>` : ''}
                 <div class="col-series-prog">
                   <div class="mini-bar"><div class="mini-bar-fill" style="width:${pct}%"></div></div>
                   <span class="tabular">${g.readCount}/${g.count}</span>
@@ -4424,7 +4773,8 @@
         if (!b || !b.id || this.enrichingBookIds.has(b.id)) continue;
         this.enrichingBookIds.add(b.id);
         try {
-          const result = await metaMod.enrichBookOnline(b);
+          const srvBase = this.isOnlineToServer ? this.activeServerOrigin || '.' : false;
+          const result = await metaMod.enrichBookOnline(b, { serverBase: srvBase });
           if (!result) continue;
           const override = {
             author: result.author || b.author || 'Unknown Author',
@@ -4433,6 +4783,9 @@
             genres: Array.isArray(result.genres) && result.genres.length ? result.genres : ['General Fiction'],
             tags: Array.isArray(result.tags) ? result.tags : [],
             description: result.description || b.description || '',
+            goodreadsRating: result.goodreadsRating || b.goodreadsRating || null,
+            goodreadsUrl: result.goodreadsUrl || b.goodreadsUrl || null,
+            descSource: result.descSource || 'goodreads',
             updatedAt: Date.now(),
           };
           if (!this.state.bookMetaOverrides) this.state.bookMetaOverrides = {};
@@ -4483,7 +4836,8 @@
       }
 
       try {
-        const result = await metaMod.enrichBookOnline(book);
+        const srvBase = this.isOnlineToServer ? this.activeServerOrigin || '.' : false;
+        const result = await metaMod.enrichBookOnline(book, { serverBase: srvBase, force: !silent });
         const override = {
           author: result.author || book.author || 'Unknown Author',
           series: result.series || '',
@@ -4491,6 +4845,9 @@
           genres: Array.isArray(result.genres) && result.genres.length ? result.genres : ['General Fiction'],
           tags: Array.isArray(result.tags) ? result.tags : [],
           description: result.description || book.description || '',
+          goodreadsRating: result.goodreadsRating || book.goodreadsRating || null,
+          goodreadsUrl: result.goodreadsUrl || book.goodreadsUrl || null,
+          descSource: result.descSource || 'goodreads',
           updatedAt: Date.now(),
         };
         if (!this.state.bookMetaOverrides) this.state.bookMetaOverrides = {};
@@ -4499,10 +4856,14 @@
         this.scheduleSync();
         this.renderCurrentRoute();
         if (!silent) {
-          const bits = [override.genres[0], override.series ? `Bộ ${override.series}` : '', ...override.tags.slice(0, 2).map((t) => `#${t}`)].filter(Boolean);
+          const bits = [
+            result.goodreadsRating ? `★ ${result.goodreadsRating} Goodreads` : '',
+            override.genres[0],
+            override.series ? `Bộ ${override.series}` : '',
+          ].filter(Boolean);
           this.toast(
             result.enrichedOnline
-              ? `Đã tra cứu & gắn nhãn online: ${bits.join(' · ')}`
+              ? `Đã cập nhật mô tả & nhãn từ Goodreads: ${bits.join(' · ')}`
               : `Đã phân loại tự động: ${bits.join(' · ')}`
           );
         }
@@ -4514,6 +4875,42 @@
         if (this.activeBookInfoId === bookId && document.getElementById('book-info-modal')?.classList.contains('open')) {
           this.renderBookInfoModal(bookId);
         }
+      }
+    }
+
+    async runBatchGoodreadsEnrich() {
+      if (!this.isOnlineToServer) {
+        this.toast('Cần kết nối tới máy chủ PC để đồng bộ toàn bộ từ Goodreads');
+        return;
+      }
+      this.toast('Đang bắt đầu quét & đồng bộ toàn bộ sách & bộ truyện từ Goodreads…');
+      try {
+        const res = await fetch(this.apiUrl('/api/library/enrich-all'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ forceAllBooks: false }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (Array.isArray(data.books)) {
+          this.serverBooks = data.books;
+          window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+        }
+        if (data.state) {
+          if (data.state.seriesMeta) {
+            this.state.seriesMeta = Object.assign({}, this.state.seriesMeta, data.state.seriesMeta);
+          }
+          if (data.state.bookMetaOverrides) {
+            this.state.bookMetaOverrides = Object.assign({}, this.state.bookMetaOverrides, data.state.bookMetaOverrides);
+          }
+          this.scheduleSync();
+        }
+        this.renderCurrentRoute();
+        const stat = data.status || {};
+        this.toast(`Goodreads: Đã cập nhật ${stat.updatedBooks || 0} sách và ${stat.updatedSeries || 0} bộ truyện!`);
+      } catch (err) {
+        console.error('[runBatchGoodreadsEnrich]', err);
+        this.toast('Lỗi khi cập nhật Goodreads: ' + (err.message || 'Network error'));
       }
     }
 
@@ -4540,7 +4937,13 @@
         seriesIndex,
         genres: genres.length ? genres.slice(0, 6) : ['General Fiction'],
         tags: tags.slice(0, 10),
-        description: existing?.description || '',
+        description:
+          fields.description !== undefined
+            ? String(fields.description || '').trim()
+            : existing?.description || '',
+        goodreadsRating: existing?.goodreadsRating || null,
+        goodreadsUrl: existing?.goodreadsUrl || null,
+        descSource: existing?.descSource || 'manual',
         manual: true,
         updatedAt: Date.now(),
       };
@@ -4786,6 +5189,13 @@
             <button class="book-info-author book-info-link" data-filter-author="${escHtml(profile.author)}" type="button" title="Xem tất cả sách của tác giả này">${escHtml(profile.author)}</button>
             <div class="book-info-status-row">
               <span class="pct-pill tabular">${books.length} cuốn · Đã đọc ${readCount}/${books.length}</span>
+              ${
+                profile.seriesUrl
+                  ? `<a class="goodreads-pill tabular" href="${escHtml(profile.seriesUrl)}" target="_blank" rel="noopener noreferrer" title="Mở trang bộ truyện trên Goodreads">Goodreads Series</a>`
+                  : profile.enrichedOnline
+                  ? `<span class="goodreads-pill tabular">Goodreads</span>`
+                  : ''
+              }
             </div>
             ${
               genres.length
@@ -4917,7 +5327,8 @@
       }
 
       try {
-        const res = await metaMod.enrichSeriesOnline(seriesName, books);
+        const srvBase = this.isOnlineToServer ? this.activeServerOrigin || '.' : false;
+        const res = await metaMod.enrichSeriesOnline(seriesName, books, { serverBase: srvBase, force: !silent });
         if (this.state.seriesMeta?.[key]?.manual) {
           // Do not overwrite manual user overrides
           return;
@@ -4925,6 +5336,9 @@
         if (!this.state.seriesMeta) this.state.seriesMeta = {};
         this.state.seriesMeta[key] = {
           name: seriesName,
+          author: res.author || '',
+          subtitle: res.subtitle || '',
+          seriesUrl: res.seriesUrl || '',
           genres: Array.isArray(res.genres) && res.genres.length ? res.genres : ['General Fiction'],
           tags: Array.isArray(res.tags) ? res.tags : ['Theo bộ'],
           description: res.description || '',
@@ -5024,6 +5438,11 @@
             }
             <div class="book-info-status-row">
               <span class="pct-pill tabular">${statusLabel}</span>
+              ${
+                book.goodreadsRating
+                  ? `<a class="goodreads-pill tabular" href="${escHtml(book.goodreadsUrl || `https://www.goodreads.com/search?q=${encodeURIComponent(book.title)}`)}" target="_blank" rel="noopener noreferrer" title="Mở trang sách trên Goodreads">★ ${book.goodreadsRating} Goodreads</a>`
+                  : ''
+              }
               ${book.isOffline ? `<span class="offline-pill">Offline</span>` : ''}
             </div>
             ${
@@ -5086,9 +5505,13 @@
                   <span class="meta-edit-label">Tags (cách nhau bằng dấu phẩy)</span>
                   <input id="meta-edit-tags" class="meta-edit-input" type="text" value="${escHtml(tags.join(', '))}" placeholder="Trinh thám, Kinh điển, Tiếng Anh" />
                 </label>
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Mô tả sách (Description)</span>
+                  <textarea id="meta-edit-desc" class="book-review-textarea" rows="4" placeholder="Nhập tóm tắt nội dung cuốn sách…">${escHtml(desc)}</textarea>
+                </label>
               </div>
               <div class="book-info-actions">
-                <button class="apple-pill-btn small" data-save-meta-override="${escHtml(bookId)}" type="button">Lưu nhãn</button>
+                <button class="apple-pill-btn small" data-save-meta-override="${escHtml(bookId)}" type="button">Lưu thông tin &amp; nhãn</button>
               </div>
             </div>
           </div>
@@ -5649,6 +6072,10 @@
           this.toast('Không kết nối được tới máy chủ PC');
         }
       });
+      document.getElementById('more-goodreads-enrich-btn')?.addEventListener('click', () => {
+        this.closeAllSheets();
+        this.runBatchGoodreadsEnrich();
+      });
 
       // Quiet filter tabs
       document.querySelectorAll('.quiet-tab').forEach((btn) => {
@@ -5677,6 +6104,11 @@
       });
       document.getElementById('banner-upload-sticker-btn')?.addEventListener('click', () => {
         document.getElementById('upload-sticker-input')?.click();
+      });
+      document.querySelectorAll('.banner-mode-btn[data-banner-sticker-mode]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.setStickerPlacementMode(btn.dataset.bannerStickerMode, { fromBanner: true });
+        });
       });
 
       // Floating Sticker Inspector controls
@@ -5725,6 +6157,11 @@
         this.updateShelfConfig({ placedStickers: list });
         this.updateStickerInspectorUI();
         this.toast('Đã gỡ sticker khỏi kệ');
+      });
+      document.querySelectorAll('.insp-mode-btn[data-sticker-mode]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.setStickerPlacementMode(btn.dataset.stickerMode, { fromBanner: false });
+        });
       });
 
       // Search input
@@ -5987,6 +6424,15 @@
         if (seriesInfoBtn) {
           e.stopPropagation();
           this.openSeriesInfoModal(seriesInfoBtn.dataset.openSeriesInfo);
+          return;
+        }
+
+        const toggleOverviewBtn = e.target.closest('[data-toggle-series-overview]');
+        if (toggleOverviewBtn) {
+          e.stopPropagation();
+          const key = toggleOverviewBtn.dataset.toggleSeriesOverview;
+          this.expandedSeriesOverviewKey = this.expandedSeriesOverviewKey === key ? null : key;
+          this.renderShelfPage();
           return;
         }
 
@@ -6269,6 +6715,7 @@
             seriesIndex: document.getElementById('meta-edit-series-idx')?.value || '',
             genres: document.getElementById('meta-edit-genres')?.value || '',
             tags: document.getElementById('meta-edit-tags')?.value || '',
+            description: document.getElementById('meta-edit-desc')?.value || '',
           });
           return;
         }
