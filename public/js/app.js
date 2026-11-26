@@ -184,6 +184,11 @@
       this.customFontMap = new Map();
       this.loadedFontFamilies = new Set();
       this.customWallpaperUrl = null;
+      this.wallpaperUrls = new Map(); // scopeKey -> objectURL
+      this.studioScopeMode = 'global'; // 'global' | 'scoped'
+      this.studioScopeType = 'series'; // 'series' | 'genre' | 'author' | 'folder' | 'route'
+      this.studioScopeValue = '';
+      this.studioScopeKey = 'global';
       this.isOnlineToServer = false;
       this.deferredInstallPrompt = null;
       this.activeBookInfoId = null;
@@ -297,9 +302,12 @@
     }
 
     computeShelfCols() {
-      const w = window.innerWidth;
+      const rawW = window.innerWidth;
+      const rawH = window.innerHeight;
+      const isShortLandscape = rawW > rawH && rawH <= 540;
+      const w = isShortLandscape ? Math.max(320, rawW - 76) : rawW;
       if (w < 460) return 3;
-      if (w < 720) return 4;
+      if (w < 700) return 4;
       if (w < 1020) return 5;
       return 6;
     }
@@ -476,11 +484,51 @@
       const def = window.PaperInkShelfDecor?.DEFAULT_SHELF_CONFIG || {};
       const merged = { ...structuredClone(def), ...(raw || {}) };
       if (!Array.isArray(merged.placedStickers)) merged.placedStickers = [];
-      if (!merged.bgMode) merged.bgMode = 'color';
+      if (!merged.bgMode || !['color', 'preset', 'image'].includes(merged.bgMode)) {
+        merged.bgMode = 'color';
+      }
+      if (!merged.bgPreset) merged.bgPreset = 'cozy-amber';
       if (!merged.bgColor || !/^#[0-9a-fA-F]{6}$/.test(merged.bgColor)) {
         merged.bgColor = '#F8F9FA';
       }
+      if (!merged.scopedWallpapers || typeof merged.scopedWallpapers !== 'object' || Array.isArray(merged.scopedWallpapers)) {
+        merged.scopedWallpapers = {};
+      }
       return merged;
+    }
+
+    getWallpaperBlobKey(scopeKey = 'global') {
+      return !scopeKey || scopeKey === 'global' ? 'customWallpaper' : `customWallpaper:${scopeKey}`;
+    }
+
+    getWallpaperUrl(scopeKey = 'global') {
+      if (!scopeKey || scopeKey === 'global') {
+        return this.wallpaperUrls.get('global') || this.customWallpaperUrl || null;
+      }
+      return this.wallpaperUrls.get(scopeKey) || null;
+    }
+
+    async reloadAllWallpaperBlobs() {
+      const wpBlob = await window.PaperInkDB.getKV('customWallpaper');
+      if (wpBlob instanceof Blob) {
+        const prev = this.wallpaperUrls.get('global');
+        if (prev) URL.revokeObjectURL(prev);
+        const url = URL.createObjectURL(wpBlob);
+        this.customWallpaperUrl = url;
+        this.wallpaperUrls.set('global', url);
+      }
+      const scoped = this.state.shelfConfig?.scopedWallpapers || {};
+      for (const sKey of Object.keys(scoped)) {
+        if (!sKey || sKey === 'global' || scoped[sKey]?.removed) continue;
+        try {
+          const sBlob = await window.PaperInkDB.getKV(this.getWallpaperBlobKey(sKey));
+          if (sBlob instanceof Blob) {
+            const prev = this.wallpaperUrls.get(sKey);
+            if (prev) URL.revokeObjectURL(prev);
+            this.wallpaperUrls.set(sKey, URL.createObjectURL(sBlob));
+          }
+        } catch (_) {}
+      }
     }
 
     async loadLocalData() {
@@ -515,10 +563,7 @@
           this.serverBooks = cachedCatalog;
         }
 
-        const wpBlob = await window.PaperInkDB.getKV('customWallpaper');
-        if (wpBlob instanceof Blob) {
-          this.customWallpaperUrl = URL.createObjectURL(wpBlob);
-        }
+        await this.reloadAllWallpaperBlobs();
 
         await this.reloadCustomFonts();
         await this.reloadCustomStickers();
@@ -820,8 +865,29 @@
       if (incoming.settings && (incoming.settings.updatedAt || 0) >= (this.state.settings?.updatedAt || 0)) {
         this.state.settings = this.normalizeSettings(incoming.settings);
       }
-      if (incoming.shelfConfig && (incoming.shelfConfig.updatedAt || 0) >= (this.state.shelfConfig?.updatedAt || 0)) {
-        this.state.shelfConfig = this.normalizeShelfConfig(incoming.shelfConfig);
+      if (incoming.shelfConfig && typeof incoming.shelfConfig === 'object') {
+        const curCfg = this.state.shelfConfig || {};
+        const mergedScoped = { ...(curCfg.scopedWallpapers || {}) };
+        if (incoming.shelfConfig.scopedWallpapers && typeof incoming.shelfConfig.scopedWallpapers === 'object') {
+          for (const [sKey, entry] of Object.entries(incoming.shelfConfig.scopedWallpapers)) {
+            if (!entry || typeof entry !== 'object') continue;
+            const prev = mergedScoped[sKey];
+            if (!prev || (entry.updatedAt || 0) >= (prev.updatedAt || 0)) {
+              mergedScoped[sKey] = entry;
+            }
+          }
+        }
+        if ((incoming.shelfConfig.updatedAt || 0) >= (curCfg.updatedAt || 0)) {
+          this.state.shelfConfig = this.normalizeShelfConfig({
+            ...incoming.shelfConfig,
+            scopedWallpapers: mergedScoped,
+          });
+        } else {
+          this.state.shelfConfig = this.normalizeShelfConfig({
+            ...curCfg,
+            scopedWallpapers: mergedScoped,
+          });
+        }
       }
       if (incoming.readingStats && typeof incoming.readingStats === 'object') {
         const rs = this.state.readingStats || { dailyMinutes: {}, dailyGoalMinutes: 30, pagesTurned: 0, updatedAt: 0 };
@@ -1339,6 +1405,162 @@
       this.scheduleSync();
     }
 
+    makeWallpaperScopeKey(type, value) {
+      if (!type || type === 'global') return 'global';
+      const v = String(value || '').trim();
+      if (!v) return 'global';
+      if (type === 'series') return `series:${this.canonicalSeriesKey(v)}`;
+      return `${type}:${v}`;
+    }
+
+    describeWallpaperScope(type, value) {
+      if (!type || type === 'global') return 'Mọi nền';
+      const v = String(value || '').trim();
+      if (type === 'series') return `Bộ: ${v}`;
+      if (type === 'genre') return `Thể loại: ${v}`;
+      if (type === 'author') return `Tác giả: ${v}`;
+      if (type === 'folder') {
+        const fld = this.getFolderById?.(v);
+        return `Thư mục: ${fld?.name || v}`;
+      }
+      if (type === 'route') {
+        const routeNames = {
+          shelf: 'Kệ sách chính',
+          genres: 'Tab Thể loại',
+          authors: 'Tab Tác giả',
+          series: 'Tab Bộ truyện',
+          progress: 'Tab Tiến độ',
+        };
+        return routeNames[v] || `Tab: ${v}`;
+      }
+      return v;
+    }
+
+    getScopedWallpaperEntry(scopeKey) {
+      if (!scopeKey || scopeKey === 'global') return null;
+      const entry = this.state.shelfConfig?.scopedWallpapers?.[scopeKey];
+      if (!entry || typeof entry !== 'object' || entry.removed) return null;
+      return entry;
+    }
+
+    resolveViewWallpaper(includeStudioPreview = true) {
+      // Live preview when user is actively editing a scoped shelf inside Studio Sheet
+      const studioOpen = Boolean(document.getElementById('studio-sheet')?.classList.contains('open'));
+      if (includeStudioPreview && studioOpen && this.studioScopeMode === 'scoped' && this.studioScopeKey !== 'global') {
+        const previewEntry = this.getScopedWallpaperEntry(this.studioScopeKey);
+        if (previewEntry) {
+          return { scopeKey: this.studioScopeKey, isScoped: true, cfg: previewEntry };
+        }
+      }
+
+      if (this.drilldown) {
+        const dKey = this.makeWallpaperScopeKey(this.drilldown.type, this.drilldown.value);
+        const dEntry = this.getScopedWallpaperEntry(dKey);
+        if (dEntry) {
+          return { scopeKey: dKey, isScoped: true, cfg: dEntry };
+        }
+      }
+
+      const rKey = `route:${this.route}`;
+      const rEntry = this.getScopedWallpaperEntry(rKey);
+      if (rEntry) {
+        return { scopeKey: rKey, isScoped: true, cfg: rEntry };
+      }
+
+      return { scopeKey: 'global', isScoped: false, cfg: this.state.shelfConfig };
+    }
+
+    getEditingWallpaperTarget() {
+      if (this.studioScopeMode !== 'scoped' || !this.studioScopeKey || this.studioScopeKey === 'global') {
+        return { scopeKey: 'global', isScoped: false, hasCustom: true, cfg: this.state.shelfConfig };
+      }
+      const existing = this.getScopedWallpaperEntry(this.studioScopeKey);
+      if (existing) {
+        return { scopeKey: this.studioScopeKey, isScoped: true, hasCustom: true, cfg: existing };
+      }
+      return {
+        scopeKey: this.studioScopeKey,
+        isScoped: true,
+        hasCustom: false,
+        cfg: {
+          bgMode: this.state.shelfConfig.bgMode || 'color',
+          bgColor: this.state.shelfConfig.bgColor || '#F8F9FA',
+          bgPreset: this.state.shelfConfig.bgPreset || 'cozy-amber',
+          bgAmbient: this.state.shelfConfig.bgAmbient !== false,
+          bgBlur: this.state.shelfConfig.bgBlur || 0,
+          bgDim: this.state.shelfConfig.bgDim || 0,
+        },
+      };
+    }
+
+    updateEditingWallpaper(patch) {
+      if (!this.state.shelfConfig.scopedWallpapers) {
+        this.state.shelfConfig.scopedWallpapers = {};
+      }
+      if (this.studioScopeMode === 'scoped' && this.studioScopeKey && this.studioScopeKey !== 'global') {
+        const prev = this.getScopedWallpaperEntry(this.studioScopeKey) || {
+          scopeKey: this.studioScopeKey,
+          scopeType: this.studioScopeType,
+          scopeValue: this.studioScopeValue,
+          label: this.describeWallpaperScope(this.studioScopeType, this.studioScopeValue),
+          bgMode: this.state.shelfConfig.bgMode || 'color',
+          bgColor: this.state.shelfConfig.bgColor || '#F8F9FA',
+          bgPreset: this.state.shelfConfig.bgPreset || 'cozy-amber',
+          bgAmbient: this.state.shelfConfig.bgAmbient !== false,
+          bgBlur: this.state.shelfConfig.bgBlur || 0,
+          bgDim: this.state.shelfConfig.bgDim || 0,
+        };
+        this.state.shelfConfig.scopedWallpapers[this.studioScopeKey] = {
+          ...prev,
+          ...patch,
+          label: this.describeWallpaperScope(prev.scopeType || this.studioScopeType, prev.scopeValue || this.studioScopeValue),
+          removed: false,
+          updatedAt: Date.now(),
+        };
+        this.state.shelfConfig.updatedAt = Date.now();
+      } else {
+        this.state.shelfConfig = {
+          ...this.state.shelfConfig,
+          ...patch,
+          updatedAt: Date.now(),
+        };
+      }
+      this.applyBackgroundToDOM();
+      this.renderStudioSheet();
+      if (!this.drilldown && ['genres', 'authors', 'series'].includes(this.route)) {
+        this.renderCollectionsPage();
+      }
+      this.scheduleSync();
+    }
+
+    async resetScopedWallpaper(scopeKey) {
+      if (!scopeKey || scopeKey === 'global') return;
+      if (!this.state.shelfConfig.scopedWallpapers) {
+        this.state.shelfConfig.scopedWallpapers = {};
+      }
+      this.state.shelfConfig.scopedWallpapers[scopeKey] = {
+        scopeKey,
+        removed: true,
+        updatedAt: Date.now(),
+      };
+      this.state.shelfConfig.updatedAt = Date.now();
+      try {
+        await window.PaperInkDB.setKV(this.getWallpaperBlobKey(scopeKey), null);
+      } catch (_) {}
+      const prevUrl = this.wallpaperUrls.get(scopeKey);
+      if (prevUrl) {
+        URL.revokeObjectURL(prevUrl);
+        this.wallpaperUrls.delete(scopeKey);
+      }
+      this.applyBackgroundToDOM();
+      this.renderStudioSheet();
+      if (!this.drilldown && ['genres', 'authors', 'series'].includes(this.route)) {
+        this.renderCollectionsPage();
+      }
+      this.scheduleSync();
+      this.toast('Đã đặt lại kệ này theo hình nền chung (Mọi nền)');
+    }
+
     updateShelfConfig(patch, rerenderShelf = true) {
       this.state.shelfConfig = {
         ...this.state.shelfConfig,
@@ -1416,7 +1638,10 @@
     }
 
     applyBackgroundToDOM() {
-      const cfg = this.state.shelfConfig;
+      const resolved = this.resolveViewWallpaper(true);
+      const viewActual = this.resolveViewWallpaper(false);
+      const cfg = resolved.cfg || this.state.shelfConfig;
+      const scopeKey = resolved.scopeKey || 'global';
       const themeName = this.state.settings.theme || 'apple';
       const darkActive = isDarkThemeName(themeName);
       const libView = document.getElementById('library-view');
@@ -1425,34 +1650,70 @@
       const scrimEl = document.getElementById('library-wallpaper-scrim');
       if (!libView || !wpEl || !scrimEl || !ambEl) return;
 
-      const useImage = cfg.bgMode === 'image' && Boolean(this.customWallpaperUrl);
+      // Update header Studio badge when current view has its own custom wallpaper
+      const scopeDot = document.getElementById('studio-scope-dot');
+      const studioLbl = document.getElementById('lib-studio-label');
+      scopeDot?.classList.toggle('hidden', !viewActual.isScoped);
+      if (studioLbl) {
+        studioLbl.textContent = viewActual.isScoped ? 'Nền riêng' : 'Nền & Kệ';
+      }
+
+      const imgUrl = this.getWallpaperUrl(scopeKey);
+      const useImage = cfg.bgMode === 'image' && Boolean(imgUrl);
+      const usePreset = cfg.bgMode === 'preset' || (cfg.bgMode === 'image' && !imgUrl && Boolean(cfg.bgPreset));
+
       if (useImage) {
         wpEl.style.backgroundColor = darkActive ? '#131314' : '#141416';
-        wpEl.style.backgroundImage = `url("${this.customWallpaperUrl}")`;
+        wpEl.style.backgroundImage = `url("${imgUrl}")`;
         wpEl.style.backgroundSize = 'cover';
         wpEl.style.backgroundPosition = 'center';
         const blurPx = Number(cfg.bgBlur || 0);
         wpEl.style.filter = blurPx > 0 ? `blur(${blurPx}px)` : '';
         wpEl.style.transform = blurPx > 0 ? 'scale(1.06)' : '';
         const baseDim = Number(cfg.bgDim || 0) / 100;
-        const dimPct = darkActive ? Math.max(0.46, baseDim) : baseDim;
+        const dimPct = darkActive ? Math.max(0.44, baseDim) : baseDim;
         scrimEl.style.opacity = String(Math.max(0, Math.min(0.82, dimPct)));
         ambEl.style.opacity = '0';
         libView.classList.toggle('wp-dark', darkActive || dimPct >= 0.25);
         const metaTheme = document.querySelector('meta[name="theme-color"]');
         if (metaTheme) metaTheme.setAttribute('content', THEME_META_COLORS[themeName] || '#F8F9FA');
+      } else if (usePreset) {
+        const decorMod = window.PaperInkShelfDecor;
+        const preset = decorMod?.getPresetById(cfg.bgPreset) || decorMod?.WALLPAPER_PRESETS?.[0];
+        wpEl.style.backgroundColor = preset?.metaColor || '#18181b';
+        wpEl.style.backgroundImage = preset?.css || 'none';
+        wpEl.style.backgroundSize = 'cover';
+        wpEl.style.backgroundPosition = 'center';
+        wpEl.style.filter = '';
+        wpEl.style.transform = '';
+        const baseDim = Number(cfg.bgDim || 0) / 100;
+        const dimPct = darkActive && !preset?.isDark ? Math.max(0.54, baseDim) : baseDim;
+        scrimEl.style.opacity = String(Math.max(0, Math.min(0.82, dimPct)));
+        ambEl.style.opacity = '0';
+        const isDark = Boolean(preset?.isDark) || darkActive || dimPct >= 0.35;
+        libView.classList.toggle('wp-dark', isDark);
+        const metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) metaTheme.setAttribute('content', preset?.metaColor || '#18181b');
       } else {
         const savedHex = cfg.bgColor || '#F8F9FA';
         const savedIsDark = hexLuminance(savedHex) < 0.28;
-        // When global Dark/AMOLED mode is ON and saved wallpaper is light, smoothly show M3 Dark surface without erasing saved light hex!
-        const effectiveHex =
-          darkActive && !savedIsDark ? (themeName === 'amoled' ? '#000000' : '#131314') : savedHex;
+        let effectiveHex = savedHex;
+        let colorDim = 0;
+        if (darkActive && !savedIsDark) {
+          if (resolved.isScoped) {
+            // Preserve intentional scoped shelf tint in Dark Mode with a soft dark scrim
+            effectiveHex = savedHex;
+            colorDim = 0.58;
+          } else {
+            effectiveHex = themeName === 'amoled' ? '#000000' : '#131314';
+          }
+        }
         wpEl.style.backgroundImage = 'none';
         wpEl.style.backgroundColor = effectiveHex;
         wpEl.style.filter = '';
         wpEl.style.transform = '';
-        scrimEl.style.opacity = '0';
-        const isDark = darkActive || hexLuminance(effectiveHex) < 0.28;
+        scrimEl.style.opacity = String(colorDim);
+        const isDark = darkActive || hexLuminance(effectiveHex) < 0.28 || colorDim >= 0.35;
         libView.classList.toggle('wp-dark', isDark);
         ambEl.style.opacity = cfg.bgAmbient !== false ? '1' : '0';
         const metaTheme = document.querySelector('meta[name="theme-color"]');
@@ -2249,6 +2510,8 @@
       backBtn?.classList.toggle('hidden', !this.drilldown);
       searchToggle?.classList.toggle('hidden', isProgressView);
       if (isProgressView && this.searchOpen) this.setSearchOpen(false);
+
+      this.applyBackgroundToDOM();
 
       if (isShelfView) {
         this.renderShelfPage();
@@ -3110,6 +3373,21 @@
                     : `${g.activeCount > 0 ? `${g.activeCount} đang đọc` : `${g.count} đầu sách`}`
                 }</div>`;
 
+          const cScopeKey = this.makeWallpaperScopeKey(type, g.name);
+          const cScopedWp = this.getScopedWallpaperEntry(cScopeKey);
+          let wpDotHtml = '';
+          if (cScopedWp) {
+            const cImg = this.getWallpaperUrl(cScopeKey);
+            const cPreset = window.PaperInkShelfDecor?.getPresetById(cScopedWp.bgPreset);
+            const dotStyle =
+              cScopedWp.bgMode === 'image' && cImg
+                ? `background-image:url('${escHtml(cImg)}')`
+                : cScopedWp.bgMode === 'preset' && cPreset
+                ? `background:${cPreset.css}`
+                : `background:${escHtml(cScopedWp.bgColor || '#0B57D0')}`;
+            wpDotHtml = `<span class="col-wp-dot" style="${dotStyle}" title="Kệ này đang có hình nền riêng"></span>`;
+          }
+
           return `
             <article class="collection-card glass-card ${type === 'series' ? 'series-collection-card' : ''}"
                      data-open-collection-type="${type}"
@@ -3121,6 +3399,7 @@
                 <div class="collection-top">
                   <h3 class="collection-name">${escHtml(g.name)}</h3>
                   <div class="collection-top-right">
+                    ${wpDotHtml}
                     <span class="collection-count tabular">${g.count}</span>
                     ${
                       type === 'series'
@@ -3383,12 +3662,134 @@
       `;
     }
 
-    // ---- STUDIO SHEET (KỆ GỖ, MÀU/ẢNH NỀN, TẢI STICKER) ----
-    openStudioSheet() {
-      this.closeAllSheets();
+    // ---- STUDIO SHEET (KỆ GỖ, MÀU/ẢNH NỀN MỌI NỀN HOẶC RIÊNG TỪNG KỆ, TẢI STICKER) ----
+    getScopeCandidatesByType(type = 'series') {
+      const all = this.getMergedBooks();
+      const metaMod = window.PaperInkMetadata;
+      if (type === 'series') {
+        const counts = new Map();
+        const displayNames = new Map();
+        for (const b of all) {
+          if (!b.series) continue;
+          const manualOv = Boolean(this.state.bookMetaOverrides?.[b.id]?.manual);
+          if (!manualOv && metaMod?.isSeriesSameAsAuthor?.(b.series, b.author)) continue;
+          const key = this.canonicalSeriesKey(b.series);
+          if (!key) continue;
+          counts.set(key, (counts.get(key) || 0) + 1);
+          if (!displayNames.has(key)) displayNames.set(key, b.series);
+          else if (/^the\s+/i.test(displayNames.get(key)) && !/^the\s+/i.test(b.series)) {
+            displayNames.set(key, b.series);
+          }
+        }
+        return Array.from(counts.entries())
+          .map(([k, cnt]) => {
+            const name = displayNames.get(k) || k;
+            return { value: name, key: `series:${k}`, label: `${name} (${cnt} cuốn)`, count: cnt };
+          })
+          .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+      }
+      if (type === 'genre') {
+        const counts = new Map();
+        for (const b of all) {
+          for (const g of b.genres || ['General Fiction']) {
+            counts.set(g, (counts.get(g) || 0) + 1);
+          }
+        }
+        return Array.from(counts.entries())
+          .map(([g, cnt]) => ({ value: g, key: `genre:${g}`, label: `${g} (${cnt} cuốn)`, count: cnt }))
+          .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+      }
+      if (type === 'author') {
+        const counts = new Map();
+        for (const b of all) {
+          const a = b.author || 'Unknown Author';
+          counts.set(a, (counts.get(a) || 0) + 1);
+        }
+        return Array.from(counts.entries())
+          .map(([a, cnt]) => ({ value: a, key: `author:${a}`, label: `${a} (${cnt} cuốn)`, count: cnt }))
+          .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+      }
+      if (type === 'folder') {
+        return (this.state.folders || []).map((f) => ({
+          value: f.id,
+          key: `folder:${f.id}`,
+          label: `${f.name} (${(f.bookIds || []).length} cuốn)`,
+          count: (f.bookIds || []).length,
+        }));
+      }
+      if (type === 'route') {
+        return [
+          { value: 'shelf', key: 'route:shelf', label: 'Kệ sách chính' },
+          { value: 'series', key: 'route:series', label: 'Tab Bộ truyện' },
+          { value: 'genres', key: 'route:genres', label: 'Tab Thể loại' },
+          { value: 'authors', key: 'route:authors', label: 'Tab Tác giả' },
+          { value: 'progress', key: 'route:progress', label: 'Tab Tiến độ' },
+        ];
+      }
+      return [];
+    }
+
+    setStudioScopeMode(mode) {
+      this.studioScopeMode = mode === 'scoped' ? 'scoped' : 'global';
+      if (this.studioScopeMode === 'global') {
+        this.studioScopeKey = 'global';
+      } else {
+        if (this.drilldown) {
+          this.studioScopeType = this.drilldown.type;
+          this.studioScopeValue = this.drilldown.value;
+          this.studioScopeKey = this.makeWallpaperScopeKey(this.drilldown.type, this.drilldown.value);
+        } else if (!this.studioScopeKey || this.studioScopeKey === 'global') {
+          this.setStudioScopeType(this.studioScopeType || 'series', null, false);
+        }
+      }
       this.renderStudioSheet();
+      this.applyBackgroundToDOM();
+    }
+
+    setStudioScopeType(type, preferredVal = null, rerender = true) {
+      this.studioScopeType = type;
+      const opts = this.getScopeCandidatesByType(type);
+      if (preferredVal) {
+        this.studioScopeValue = preferredVal;
+        this.studioScopeKey = this.makeWallpaperScopeKey(type, preferredVal);
+      } else if (opts.length > 0) {
+        this.studioScopeValue = opts[0].value;
+        this.studioScopeKey = opts[0].key;
+      } else {
+        this.studioScopeValue = '';
+        this.studioScopeKey = 'global';
+      }
+      if (rerender) {
+        this.renderStudioSheet();
+        this.applyBackgroundToDOM();
+      }
+    }
+
+    openStudioSheet(preferredScope = null) {
+      this.closeAllSheets();
+      if (preferredScope && preferredScope.type && preferredScope.value) {
+        this.studioScopeMode = 'scoped';
+        this.studioScopeType = preferredScope.type;
+        this.studioScopeValue = preferredScope.value;
+        this.studioScopeKey = this.makeWallpaperScopeKey(preferredScope.type, preferredScope.value);
+      } else if (this.drilldown) {
+        this.studioScopeMode = 'scoped';
+        this.studioScopeType = this.drilldown.type;
+        this.studioScopeValue = this.drilldown.value;
+        this.studioScopeKey = this.makeWallpaperScopeKey(this.drilldown.type, this.drilldown.value);
+      } else if (this.getScopedWallpaperEntry(`route:${this.route}`)) {
+        this.studioScopeMode = 'scoped';
+        this.studioScopeType = 'route';
+        this.studioScopeValue = this.route;
+        this.studioScopeKey = `route:${this.route}`;
+      } else {
+        this.studioScopeMode = 'global';
+        this.studioScopeKey = 'global';
+      }
       document.getElementById('studio-backdrop')?.classList.add('open');
       document.getElementById('studio-sheet')?.classList.add('open');
+      this.renderStudioSheet();
+      this.applyBackgroundToDOM();
     }
 
     openMoreSheet() {
@@ -3400,14 +3801,17 @@
     renderStudioSheet() {
       const decorMod = window.PaperInkShelfDecor;
       if (!decorMod) return;
-      const cfg = this.state.shelfConfig;
+      const globalCfg = this.state.shelfConfig;
+      const target = this.getEditingWallpaperTarget();
+      const cfg = target.cfg;
+      const activeScopeKey = target.scopeKey;
 
       // 1. Shelf Styles
       const styleGrid = document.getElementById('shelf-style-grid');
       if (styleGrid) {
         styleGrid.innerHTML = decorMod.SHELF_STYLES.map(
           (s) => `
-            <button class="shelf-style-card ${cfg.shelfStyle === s.id ? 'active' : ''}" data-shelf-style="${s.id}" type="button">
+            <button class="shelf-style-card ${globalCfg.shelfStyle === s.id ? 'active' : ''}" data-shelf-style="${s.id}" type="button">
               <span class="shelf-swatch shelf-swatch-${s.id}" aria-hidden="true"></span>
               <span>${escHtml(s.name)}</span>
             </button>
@@ -3415,13 +3819,113 @@
         ).join('');
       }
 
-      // 2. Background mode (Color Picker vs Image Upload)
-      const isImgMode = cfg.bgMode === 'image';
-      document.querySelectorAll('.bg-mode-pill').forEach((btn) => {
-        btn.classList.toggle('active', btn.dataset.bgmode === (isImgMode ? 'image' : 'color'));
+      // 2A. Wallpaper Scope Selector (Global vs Specific Series / Genre / Author / Folder / Route)
+      const isScopedMode = this.studioScopeMode === 'scoped';
+      document.querySelectorAll('.wp-scope-mode-btn').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.wpscopeMode === (isScopedMode ? 'scoped' : 'global'));
       });
-      document.getElementById('bg-color-panel')?.classList.toggle('hidden', isImgMode);
-      document.getElementById('bg-image-panel')?.classList.toggle('hidden', !isImgMode);
+
+      const scopedBtnLabel = document.getElementById('wp-scope-scoped-label');
+      if (scopedBtnLabel) {
+        if (this.drilldown) {
+          const shortLbl = String(this.drilldown.label || this.drilldown.value || '').slice(0, 18);
+          scopedBtnLabel.textContent = `Chỉ kệ: ${shortLbl}${String(this.drilldown.label || '').length > 18 ? '…' : ''}`;
+        } else {
+          scopedBtnLabel.textContent = isScopedMode ? 'Riêng từng kệ' : 'Riêng từng kệ…';
+        }
+      }
+
+      const pickerWrap = document.getElementById('wp-scope-picker-wrap');
+      pickerWrap?.classList.toggle('hidden', !isScopedMode);
+
+      if (isScopedMode) {
+        document.querySelectorAll('.wp-type-pill').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.wptype === this.studioScopeType);
+        });
+
+        const selectEl = document.getElementById('wp-scope-target-select');
+        const candidates = this.getScopeCandidatesByType(this.studioScopeType);
+        if (selectEl) {
+          if (!candidates.length) {
+            selectEl.innerHTML = `<option value="">Chưa có mục nào trong nhóm này</option>`;
+            selectEl.disabled = true;
+          } else {
+            selectEl.disabled = false;
+            // Ensure current studioScopeKey matches one of candidates (or add current value)
+            const matched = candidates.find((c) => c.key === this.studioScopeKey);
+            if (!matched && candidates[0]) {
+              this.studioScopeValue = candidates[0].value;
+              this.studioScopeKey = candidates[0].key;
+            }
+            selectEl.innerHTML = candidates
+              .map(
+                (c) =>
+                  `<option value="${escHtml(c.value)}" ${c.key === this.studioScopeKey ? 'selected' : ''}>${escHtml(c.label)}</option>`
+              )
+              .join('');
+          }
+        }
+
+        const statusBadge = document.getElementById('wp-scope-status-badge');
+        const resetBtn = document.getElementById('reset-scoped-wp-btn');
+        const curScopedEntry = this.getScopedWallpaperEntry(this.studioScopeKey);
+        if (statusBadge) {
+          if (curScopedEntry) {
+            statusBadge.textContent = `Đang dùng nền riêng cho ${this.describeWallpaperScope(this.studioScopeType, this.studioScopeValue)}`;
+            statusBadge.classList.add('custom-active');
+          } else if (this.studioScopeKey !== 'global') {
+            statusBadge.textContent = 'Đang theo Mọi nền — chọn màu/ảnh bên dưới để tạo nền riêng';
+            statusBadge.classList.remove('custom-active');
+          } else {
+            statusBadge.textContent = 'Hãy tạo thư mục trước để đặt nền riêng';
+            statusBadge.classList.remove('custom-active');
+          }
+        }
+        resetBtn?.classList.toggle('hidden', !curScopedEntry);
+      }
+
+      // Active Scoped Wallpapers Quick Chips
+      const activeWrap = document.getElementById('active-scoped-wp-wrap');
+      const activeChipsEl = document.getElementById('active-scoped-wp-chips');
+      const allScopedEntries = Object.values(globalCfg.scopedWallpapers || {})
+        .filter((e) => e && typeof e === 'object' && !e.removed && e.scopeKey)
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+      if (activeWrap && activeChipsEl) {
+        activeWrap.classList.toggle('hidden', allScopedEntries.length === 0);
+        activeChipsEl.innerHTML = allScopedEntries
+          .map((e) => {
+            const eImg = this.getWallpaperUrl(e.scopeKey);
+            const ePreset = decorMod.getPresetById(e.bgPreset);
+            const swStyle =
+              e.bgMode === 'image' && eImg
+                ? `background-image:url('${escHtml(eImg)}')`
+                : e.bgMode === 'preset' && ePreset
+                ? `background:${ePreset.css}`
+                : `background:${escHtml(e.bgColor || '#F8F9FA')}`;
+            const isEditing = isScopedMode && this.studioScopeKey === e.scopeKey;
+            const lbl = e.label || this.describeWallpaperScope(e.scopeType, e.scopeValue);
+            return `
+              <span class="scoped-wp-chip ${isEditing ? 'editing' : ''}">
+                <button class="scoped-wp-chip-select" data-select-scoped-wp="${escHtml(e.scopeKey)}" type="button" title="Chỉnh nền riêng của ${escHtml(lbl)}">
+                  <span class="scoped-wp-swatch" style="${swStyle}"></span>
+                  <span>${escHtml(lbl)}</span>
+                </button>
+                <button class="scoped-wp-chip-del" data-remove-scoped-wp="${escHtml(e.scopeKey)}" type="button" title="Gỡ nền riêng" aria-label="Gỡ nền riêng ${escHtml(lbl)}">${ICONS.close}</button>
+              </span>
+            `;
+          })
+          .join('');
+      }
+
+      // 2B. Background Mode (Color vs Preset vs Image)
+      const curMode = ['color', 'preset', 'image'].includes(cfg.bgMode) ? cfg.bgMode : 'color';
+      document.querySelectorAll('.bg-mode-pill').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.bgmode === curMode);
+      });
+      document.getElementById('bg-color-panel')?.classList.toggle('hidden', curMode !== 'color');
+      document.getElementById('bg-preset-panel')?.classList.toggle('hidden', curMode !== 'preset');
+      document.getElementById('bg-image-panel')?.classList.toggle('hidden', curMode !== 'image');
 
       const colorInp = document.getElementById('custom-bg-color-input');
       const hexLbl = document.getElementById('custom-bg-hex');
@@ -3435,7 +3939,7 @@
       if (swBox) {
         swBox.innerHTML = decorMod.BG_COLORS.map(
           (c) => `
-            <button class="bg-color-dot ${(cfg.bgColor || '').toUpperCase() === c.hex.toUpperCase() ? 'active' : ''}"
+            <button class="bg-color-dot ${curMode === 'color' && (cfg.bgColor || '').toUpperCase() === c.hex.toUpperCase() ? 'active' : ''}"
                     data-pick-color="${c.hex}"
                     style="background:${c.hex}"
                     title="${escHtml(c.name)}"
@@ -3445,7 +3949,43 @@
         ).join('');
       }
 
-      document.getElementById('clear-wallpaper-btn')?.classList.toggle('hidden', !this.customWallpaperUrl);
+      // Artistic Presets Grid
+      const presetGrid = document.getElementById('bg-preset-grid');
+      if (presetGrid) {
+        presetGrid.innerHTML = (decorMod.WALLPAPER_PRESETS || [])
+          .map(
+            (p) => `
+            <button class="wp-preset-card ${curMode === 'preset' && cfg.bgPreset === p.id ? 'active' : ''}"
+                    data-pick-preset="${p.id}"
+                    type="button">
+              <span class="wp-preset-preview" style="background:${p.css}" aria-hidden="true"></span>
+              <span class="wp-preset-name">${escHtml(p.name)}</span>
+            </button>
+          `
+          )
+          .join('');
+      }
+      const presetDimInp = document.getElementById('set-preset-dim');
+      const presetDimVal = document.getElementById('val-preset-dim');
+      if (presetDimInp) presetDimInp.value = String(cfg.bgDim || 0);
+      if (presetDimVal) presetDimVal.textContent = `${cfg.bgDim || 0}%`;
+
+      // Custom Image Upload controls (per-scope!)
+      const hasScopeImg = Boolean(this.getWallpaperUrl(activeScopeKey));
+      document.getElementById('clear-wallpaper-btn')?.classList.toggle('hidden', !hasScopeImg);
+      const upBtnLbl = document.getElementById('upload-wallpaper-btn-label');
+      const scopeHint = document.getElementById('wp-image-scope-hint');
+      const targetDesc =
+        activeScopeKey === 'global'
+          ? 'Mọi nền (toàn bộ ứng dụng)'
+          : this.describeWallpaperScope(this.studioScopeType, this.studioScopeValue);
+      if (upBtnLbl) {
+        upBtnLbl.textContent = hasScopeImg ? 'Đổi ảnh nền khác' : 'Chọn ảnh nền từ máy';
+      }
+      if (scopeHint) {
+        scopeHint.textContent = `Ảnh tải lên sẽ áp dụng cho: ${targetDesc}. Mỗi bộ truyện hoặc thể loại có thể lưu 1 ảnh nền riêng biệt.`;
+      }
+
       const blurInp = document.getElementById('set-wp-blur');
       const blurVal = document.getElementById('val-wp-blur');
       if (blurInp) blurInp.value = String(cfg.bgBlur || 0);
@@ -3490,29 +4030,81 @@
       }
     }
 
+    async sampleImageAverageHex(url) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const cv = document.createElement('canvas');
+            cv.width = 16;
+            cv.height = 16;
+            const ctx = cv.getContext('2d');
+            ctx.drawImage(img, 0, 0, 16, 16);
+            const data = ctx.getImageData(0, 0, 16, 16).data;
+            let r = 0, g = 0, b = 0, n = 0;
+            for (let i = 0; i < data.length; i += 4) {
+              r += data[i];
+              g += data[i + 1];
+              b += data[i + 2];
+              n++;
+            }
+            if (!n) return resolve('#24262B');
+            const toHex = (v) => Math.round(v / n).toString(16).padStart(2, '0');
+            resolve(`#${toHex(r)}${toHex(g)}${toHex(b)}`);
+          } catch (_) {
+            resolve('#24262B');
+          }
+        };
+        img.onerror = () => resolve('#24262B');
+        img.src = url;
+      });
+    }
+
     async handleWallpaperUpload(file) {
       if (!file || !file.type.startsWith('image/')) {
         this.toast('Vui lòng chọn tệp ảnh hợp lệ');
         return;
       }
-      await window.PaperInkDB.setKV('customWallpaper', file);
-      if (this.customWallpaperUrl) URL.revokeObjectURL(this.customWallpaperUrl);
-      this.customWallpaperUrl = URL.createObjectURL(file);
-      this.updateShelfConfig({
+      const target = this.getEditingWallpaperTarget();
+      const scopeKey = target.scopeKey || 'global';
+      await window.PaperInkDB.setKV(this.getWallpaperBlobKey(scopeKey), file);
+
+      const prevUrl = this.wallpaperUrls.get(scopeKey);
+      if (prevUrl) URL.revokeObjectURL(prevUrl);
+      const nextUrl = URL.createObjectURL(file);
+      this.wallpaperUrls.set(scopeKey, nextUrl);
+      if (scopeKey === 'global') {
+        this.customWallpaperUrl = nextUrl;
+      }
+
+      const avgHex = await this.sampleImageAverageHex(nextUrl);
+      this.updateEditingWallpaper({
         bgMode: 'image',
-        bgDim: Math.max(15, this.state.shelfConfig.bgDim || 15),
-      }, false);
-      this.toast('Đã đặt hình nền riêng!');
+        bgColor: avgHex,
+        bgDim: Math.max(15, target.cfg?.bgDim || 15),
+      });
+
+      const targetName =
+        scopeKey === 'global'
+          ? 'Mọi nền'
+          : this.describeWallpaperScope(this.studioScopeType, this.studioScopeValue);
+      this.toast(`Đã đặt ảnh nền cho ${targetName}!`);
     }
 
     async clearCustomWallpaper() {
-      await window.PaperInkDB.setKV('customWallpaper', null);
-      if (this.customWallpaperUrl) {
-        URL.revokeObjectURL(this.customWallpaperUrl);
+      const target = this.getEditingWallpaperTarget();
+      const scopeKey = target.scopeKey || 'global';
+      await window.PaperInkDB.setKV(this.getWallpaperBlobKey(scopeKey), null);
+      const prevUrl = this.wallpaperUrls.get(scopeKey);
+      if (prevUrl) {
+        URL.revokeObjectURL(prevUrl);
+        this.wallpaperUrls.delete(scopeKey);
+      }
+      if (scopeKey === 'global') {
         this.customWallpaperUrl = null;
       }
-      this.updateShelfConfig({ bgMode: 'color', bgBlur: 0, bgDim: 0 }, false);
-      this.toast('Đã chuyển về nền màu');
+      this.updateEditingWallpaper({ bgMode: 'color', bgBlur: 0, bgDim: 0 });
+      this.toast('Đã gỡ ảnh nền tải lên');
     }
 
     // ---- Open / Download / Import EPUB ----
@@ -4210,6 +4802,10 @@
           <button class="apple-pill-btn secondary small" id="toggle-series-edit-btn" type="button">
             ${ICONS.tag}
             <span>Chỉnh sửa bộ truyện</span>
+          </button>
+          <button class="apple-pill-btn secondary small" data-open-series-wallpaper="${escHtml(seriesName)}" type="button">
+            ${ICONS.sparkles}
+            <span>Nền riêng bộ truyện</span>
           </button>
         </div>
 
@@ -4946,9 +5542,13 @@
     }
 
     closeAllSheets() {
+      const studioWasOpen = Boolean(document.getElementById('studio-sheet')?.classList.contains('open'));
       document
         .querySelectorAll('.sheet-panel.open, .sheet-backdrop.open, .modal-panel.open')
         .forEach((el) => el.classList.remove('open'));
+      if (studioWasOpen) {
+        this.applyBackgroundToDOM();
+      }
     }
 
     toast(msg) {
@@ -5123,9 +5723,9 @@
         this.renderShelfPage();
       });
 
-      // Responsive shelf column recount
+      // Responsive shelf column recount on resize & portrait/landscape rotation
       let resizeTimer = null;
-      window.addEventListener('resize', () => {
+      const handleViewportAdapt = () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
           const nextCols = this.computeShelfCols();
@@ -5133,8 +5733,10 @@
             this.lastShelfCols = nextCols;
             if (this.route === 'shelf' || this.drilldown) this.renderShelfPage();
           }
-        }, 160);
-      });
+        }, 120);
+      };
+      window.addEventListener('resize', handleViewportAdapt);
+      window.addEventListener('orientationchange', handleViewportAdapt);
 
       // Global Escape key
       document.addEventListener('keydown', (e) => {
@@ -5452,22 +6054,71 @@
         this.clearCustomWallpaper();
       });
 
+      document.getElementById('wp-scope-target-select')?.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (!val) return;
+        this.studioScopeValue = val;
+        this.studioScopeKey = this.makeWallpaperScopeKey(this.studioScopeType, val);
+        this.renderStudioSheet();
+        this.applyBackgroundToDOM();
+      });
+
+      document.getElementById('reset-scoped-wp-btn')?.addEventListener('click', () => {
+        if (this.studioScopeKey && this.studioScopeKey !== 'global') {
+          this.resetScopedWallpaper(this.studioScopeKey);
+        }
+      });
+
       document.getElementById('custom-bg-color-input')?.addEventListener('input', (e) => {
         const hex = e.target.value;
-        document.getElementById('custom-bg-hex').textContent = hex.toUpperCase();
-        this.updateShelfConfig({ bgMode: 'color', bgColor: hex }, false);
+        const hexEl = document.getElementById('custom-bg-hex');
+        if (hexEl) hexEl.textContent = hex.toUpperCase();
+        this.updateEditingWallpaper({ bgMode: 'color', bgColor: hex });
       });
       document.getElementById('set-bg-ambient')?.addEventListener('change', (e) => {
-        this.updateShelfConfig({ bgAmbient: e.target.checked }, false);
+        this.updateEditingWallpaper({ bgAmbient: e.target.checked });
+      });
+      document.getElementById('set-preset-dim')?.addEventListener('input', (e) => {
+        this.updateEditingWallpaper({ bgDim: parseInt(e.target.value, 10) });
       });
       document.getElementById('set-wp-blur')?.addEventListener('input', (e) => {
-        this.updateShelfConfig({ bgBlur: parseInt(e.target.value, 10) }, false);
+        this.updateEditingWallpaper({ bgBlur: parseInt(e.target.value, 10) });
       });
       document.getElementById('set-wp-dim')?.addEventListener('input', (e) => {
-        this.updateShelfConfig({ bgDim: parseInt(e.target.value, 10) }, false);
+        this.updateEditingWallpaper({ bgDim: parseInt(e.target.value, 10) });
       });
 
       document.getElementById('studio-sheet')?.addEventListener('click', (e) => {
+        const scopeModeBtn = e.target.closest('.wp-scope-mode-btn');
+        if (scopeModeBtn) {
+          this.setStudioScopeMode(scopeModeBtn.dataset.wpscopeMode);
+          return;
+        }
+        const typePill = e.target.closest('.wp-type-pill');
+        if (typePill) {
+          this.setStudioScopeType(typePill.dataset.wptype);
+          return;
+        }
+        const selectChip = e.target.closest('[data-select-scoped-wp]');
+        if (selectChip) {
+          const sKey = selectChip.dataset.selectScopedWp;
+          const entry = this.getScopedWallpaperEntry(sKey);
+          if (entry) {
+            this.studioScopeMode = 'scoped';
+            this.studioScopeType = entry.scopeType || sKey.split(':')[0] || 'series';
+            this.studioScopeValue = entry.scopeValue || sKey.slice(sKey.indexOf(':') + 1);
+            this.studioScopeKey = sKey;
+            this.renderStudioSheet();
+            this.applyBackgroundToDOM();
+          }
+          return;
+        }
+        const removeChip = e.target.closest('[data-remove-scoped-wp]');
+        if (removeChip) {
+          e.stopPropagation();
+          this.resetScopedWallpaper(removeChip.dataset.removeScopedWp);
+          return;
+        }
         const styleBtn = e.target.closest('[data-shelf-style]');
         if (styleBtn) {
           this.updateShelfConfig({ shelfStyle: styleBtn.dataset.shelfStyle });
@@ -5475,12 +6126,17 @@
         }
         const modeBtn = e.target.closest('.bg-mode-pill');
         if (modeBtn) {
-          this.updateShelfConfig({ bgMode: modeBtn.dataset.bgmode }, false);
+          this.updateEditingWallpaper({ bgMode: modeBtn.dataset.bgmode });
           return;
         }
         const colorDot = e.target.closest('[data-pick-color]');
         if (colorDot) {
-          this.updateShelfConfig({ bgMode: 'color', bgColor: colorDot.dataset.pickColor }, false);
+          this.updateEditingWallpaper({ bgMode: 'color', bgColor: colorDot.dataset.pickColor });
+          return;
+        }
+        const presetCard = e.target.closest('[data-pick-preset]');
+        if (presetCard) {
+          this.updateEditingWallpaper({ bgMode: 'preset', bgPreset: presetCard.dataset.pickPreset });
           return;
         }
         const delCustom = e.target.closest('[data-delete-custom-sticker]');
@@ -5542,6 +6198,13 @@
       document.getElementById('book-info-close')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-backdrop')?.addEventListener('click', () => this.closeAllSheets());
       document.getElementById('book-info-body')?.addEventListener('click', (e) => {
+        const seriesWpBtn = e.target.closest('[data-open-series-wallpaper]');
+        if (seriesWpBtn) {
+          const sName = seriesWpBtn.dataset.openSeriesWallpaper;
+          this.setRoute('series', { type: 'series', value: sName, label: sName });
+          this.openStudioSheet({ type: 'series', value: sName });
+          return;
+        }
         const autoSeriesBtn = e.target.closest('[data-auto-enrich-series]');
         if (autoSeriesBtn) {
           this.autoEnrichSeries(autoSeriesBtn.dataset.autoEnrichSeries, { silent: false });

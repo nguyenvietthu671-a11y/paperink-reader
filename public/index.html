@@ -49,9 +49,9 @@
     <div id="library-wallpaper-ambient" class="library-wallpaper-ambient" aria-hidden="true"></div>
     <div id="library-wallpaper-scrim" class="library-wallpaper-scrim" aria-hidden="true"></div>
 
-    <!-- Single Ultra-Clean Floating Apple Header -->
+    <!-- Adaptive 2-Row Mobile / 1-Row Wide Floating Header -->
     <header class="lib-header">
-      <div class="lib-container lib-header-row">
+      <div class="lib-container lib-header-shell">
         <div class="lib-title-cluster">
           <button id="drilldown-back-btn" class="back-circle-btn glass-chrome hidden" type="button" aria-label="Quay lại">
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
@@ -65,26 +65,33 @@
           </div>
         </div>
 
-        <div class="lib-action-cluster">
-          <button class="hdr-icon-btn glass-chrome" id="lib-import-btn" type="button" title="Thêm sách EPUB từ máy" aria-label="Thêm sách EPUB từ thiết bị">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          </button>
-          <button class="hdr-icon-btn glass-chrome" id="lib-search-toggle" type="button" title="Tìm kiếm" aria-label="Mở thanh tìm kiếm" aria-expanded="false">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7.5"/><line x1="20.5" y1="20.5" x2="16.4" y2="16.4"/></svg>
-          </button>
+        <div class="lib-utility-cluster">
           <button class="hdr-icon-btn glass-chrome" id="lib-dark-toggle" type="button" title="Bật chế độ Tối (Dark Mode)" aria-label="Chuyển đổi giao diện Sáng / Tối" aria-pressed="false">
-            <svg id="dark-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            <svg id="dark-icon-sun" class="hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.7" y2="6.7"/><line x1="17.3" y1="17.3" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.7" y2="17.3"/><line x1="17.3" y1="6.7" x2="19.07" y2="4.93"/></svg>
-          </button>
-          <button class="hdr-icon-btn glass-chrome" id="lib-studio-btn" type="button" title="Tùy chỉnh kệ gỗ, sticker & nền" aria-label="Tùy chỉnh kệ gỗ, sticker và nền">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
+            <svg id="dark-icon-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <svg id="dark-icon-sun" class="hidden" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.7" y2="6.7"/><line x1="17.3" y1="17.3" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.7" y2="17.3"/><line x1="17.3" y1="6.7" x2="19.07" y2="4.93"/></svg>
           </button>
           <button class="hdr-icon-btn glass-chrome" id="header-account-btn" type="button" title="Tài khoản &amp; Đồng bộ thiết bị" aria-label="Tài khoản và đồng bộ thiết bị">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <span id="header-account-dot" class="header-account-dot hidden"></span>
           </button>
           <button class="hdr-icon-btn glass-chrome" id="lib-more-btn" type="button" title="Thêm tiện ích (S25 Ultra, Từ vựng, Nhập sách)" aria-label="Mở menu tiện ích">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/></svg>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/></svg>
+          </button>
+        </div>
+
+        <div class="lib-header-actions" id="lib-header-actions">
+          <button class="hdr-tool-pill hdr-search-pill glass-chrome" id="lib-search-toggle" type="button" title="Tìm kiếm" aria-label="Mở thanh tìm kiếm" aria-expanded="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.05" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7.5"/><line x1="20.5" y1="20.5" x2="16.4" y2="16.4"/></svg>
+            <span class="hdr-pill-label hdr-search-placeholder">Tìm sách, tác giả, #tag…</span>
+          </button>
+          <button class="hdr-tool-pill glass-chrome" id="lib-import-btn" type="button" title="Thêm sách EPUB từ máy" aria-label="Thêm sách EPUB từ thiết bị">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="hdr-pill-label">Thêm sách</span>
+          </button>
+          <button class="hdr-tool-pill glass-chrome" id="lib-studio-btn" type="button" title="Tùy chỉnh kệ gỗ, sticker &amp; hình nền" aria-label="Tùy chỉnh kệ gỗ, sticker và hình nền">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
+            <span class="hdr-pill-label" id="lib-studio-label">Nền &amp; Kệ</span>
+            <span id="studio-scope-dot" class="studio-scope-dot hidden" title="Kệ này đang có hình nền riêng"></span>
           </button>
         </div>
       </div>
@@ -639,14 +646,54 @@
         <div id="shelf-style-grid" class="shelf-style-grid"></div>
       </div>
 
-      <!-- 2. Background: Color Picker OR Custom Photo Upload -->
+      <!-- 2. Background: Global OR Scoped per Series / Genre / Author / Folder -->
       <div class="inset-section">
-        <div class="inset-section-label">Màu nền &amp; Ảnh nền</div>
+        <div class="inset-section-label">Màu nền &amp; Hình nền (Mọi nền hoặc Riêng từng kệ)</div>
         <div class="inset-group">
+          <!-- Scope Selector: Global vs Specific Shelf -->
+          <div class="inset-row stack-item wp-scope-section">
+            <div class="mini-label">Phạm vi áp dụng hình nền</div>
+            <div class="ios-segmented compact" role="tablist" aria-label="Phạm vi áp dụng hình nền">
+              <button class="seg-opt wp-scope-mode-btn active" id="wp-scope-global-btn" data-wpscope-mode="global" type="button">
+                <span>Mọi nền (Chung)</span>
+              </button>
+              <button class="seg-opt wp-scope-mode-btn" id="wp-scope-scoped-btn" data-wpscope-mode="scoped" type="button">
+                <span id="wp-scope-scoped-label">Riêng từng kệ…</span>
+              </button>
+            </div>
+
+            <!-- Target Shelf Picker (visible when "Riêng từng kệ" is active) -->
+            <div id="wp-scope-picker-wrap" class="wp-scope-picker-wrap hidden">
+              <div class="wp-type-pills" role="group" aria-label="Loại kệ riêng">
+                <button class="wp-type-pill active" data-wptype="series" type="button">Bộ truyện</button>
+                <button class="wp-type-pill" data-wptype="genre" type="button">Thể loại</button>
+                <button class="wp-type-pill" data-wptype="author" type="button">Tác giả</button>
+                <button class="wp-type-pill" data-wptype="folder" type="button">Thư mục</button>
+                <button class="wp-type-pill" data-wptype="route" type="button">Tab chính</button>
+              </div>
+              <div class="wp-target-row">
+                <label for="wp-scope-target-select" class="sr-only">Chọn kệ muốn đặt hình nền riêng</label>
+                <select id="wp-scope-target-select" class="apple-text-input wp-scope-select"></select>
+              </div>
+              <div class="wp-scope-status-row">
+                <span id="wp-scope-status-badge" class="wp-scope-status-badge">Đang kế thừa từ Mọi nền</span>
+                <button id="reset-scoped-wp-btn" class="text-danger-btn compact-danger-btn hidden" type="button">Đặt lại theo Mọi nền</button>
+              </div>
+            </div>
+
+            <!-- Quick Chips of Shelves that currently have custom wallpapers -->
+            <div id="active-scoped-wp-wrap" class="active-scoped-wp-wrap hidden">
+              <div class="mini-label" style="margin-bottom:6px">Các kệ đang dùng nền riêng:</div>
+              <div id="active-scoped-wp-chips" class="scoped-wp-chips"></div>
+            </div>
+          </div>
+
+          <!-- Wallpaper Type: Solid Color | Artistic Preset | Custom Photo -->
           <div class="inset-row stack-item">
             <div class="ios-segmented compact">
-              <button class="seg-opt bg-mode-pill" data-bgmode="color" type="button">Chọn màu nền</button>
-              <button class="seg-opt bg-mode-pill" data-bgmode="image" type="button">Tải ảnh nền</button>
+              <button class="seg-opt bg-mode-pill active" data-bgmode="color" type="button">Màu đơn</button>
+              <button class="seg-opt bg-mode-pill" data-bgmode="preset" type="button">Nền nghệ thuật</button>
+              <button class="seg-opt bg-mode-pill" data-bgmode="image" type="button">Ảnh từ máy</button>
             </div>
           </div>
 
@@ -666,15 +713,28 @@
             </label>
           </div>
 
+          <!-- Artistic Preset Wallpaper Panel -->
+          <div id="bg-preset-panel" class="inset-row stack-item hidden">
+            <div id="bg-preset-grid" class="wp-preset-grid"></div>
+            <div class="slider-item sub-slider">
+              <div class="slider-meta">
+                <label for="set-preset-dim">Độ dịu nền (Dim)</label>
+                <strong id="val-preset-dim" class="tabular">0%</strong>
+              </div>
+              <input id="set-preset-dim" class="apple-range" type="range" min="0" max="65" step="5" value="0" />
+            </div>
+          </div>
+
           <!-- Image Upload Panel -->
           <div id="bg-image-panel" class="inset-row stack-item hidden">
             <div class="wallpaper-upload-row">
               <button class="apple-pill-btn small" id="upload-wallpaper-btn" type="button">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span>Chọn ảnh nền từ máy</span>
+                <span id="upload-wallpaper-btn-label">Chọn ảnh nền từ máy</span>
               </button>
               <button class="text-danger-btn hidden" id="clear-wallpaper-btn" type="button">Gỡ ảnh nền</button>
             </div>
+            <p id="wp-image-scope-hint" class="setting-hint" style="margin-top:6px"></p>
             <div class="slider-item sub-slider">
               <div class="slider-meta">
                 <label for="set-wp-blur">Độ mờ ảnh nền (Blur)</label>

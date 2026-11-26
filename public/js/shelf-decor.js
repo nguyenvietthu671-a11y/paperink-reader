@@ -166,14 +166,99 @@
     { hex: '#000000', name: 'AMOLED Đen' },
   ];
 
+  const WALLPAPER_PRESETS = [
+    {
+      id: 'cozy-amber',
+      name: 'Thư phòng Hổ phách',
+      isDark: true,
+      metaColor: '#1f1610',
+      css:
+        'radial-gradient(ellipse 85% 55% at 50% 0%, rgba(214, 142, 73, 0.34) 0%, transparent 68%), ' +
+        'radial-gradient(circle at 82% 24%, rgba(168, 92, 38, 0.24) 0%, transparent 52%), ' +
+        'linear-gradient(165deg, #271b13 0%, #1a130e 52%, #110c09 100%)',
+    },
+    {
+      id: 'noir-mist',
+      name: 'Đêm Trinh thám',
+      isDark: true,
+      metaColor: '#121821',
+      css:
+        'radial-gradient(ellipse 80% 50% at 22% 8%, rgba(76, 118, 168, 0.28) 0%, transparent 62%), ' +
+        'radial-gradient(circle at 85% 80%, rgba(44, 74, 110, 0.22) 0%, transparent 55%), ' +
+        'linear-gradient(160deg, #17202b 0%, #10161f 56%, #0b0f16 100%)',
+    },
+    {
+      id: 'forest-sage',
+      name: 'Rừng Sương Sớm',
+      isDark: false,
+      metaColor: '#e4ede6',
+      css:
+        'radial-gradient(ellipse 90% 55% at 18% 0%, rgba(164, 198, 174, 0.55) 0%, transparent 65%), ' +
+        'radial-gradient(circle at 88% 18%, rgba(215, 232, 212, 0.72) 0%, transparent 55%), ' +
+        'linear-gradient(170deg, #eaf2ec 0%, #dde8df 54%, #cfded2 100%)',
+    },
+    {
+      id: 'rose-dusk',
+      name: 'Hoàng hôn Lãng mạn',
+      isDark: false,
+      metaColor: '#f6e7e9',
+      css:
+        'radial-gradient(ellipse 85% 50% at 80% 5%, rgba(235, 172, 185, 0.52) 0%, transparent 62%), ' +
+        'radial-gradient(circle at 15% 25%, rgba(248, 212, 194, 0.55) 0%, transparent 58%), ' +
+        'linear-gradient(165deg, #fbf0f1 0%, #f3e2e6 55%, #ead5dc 100%)',
+    },
+    {
+      id: 'cosmos-indigo',
+      name: 'Tinh vân Sci-Fi',
+      isDark: true,
+      metaColor: '#131326',
+      css:
+        'radial-gradient(ellipse 75% 48% at 75% 12%, rgba(124, 92, 226, 0.34) 0%, transparent 62%), ' +
+        'radial-gradient(circle at 18% 72%, rgba(42, 130, 212, 0.24) 0%, transparent 55%), ' +
+        'linear-gradient(160deg, #171730 0%, #111224 55%, #090a14 100%)',
+    },
+    {
+      id: 'parchment-ink',
+      name: 'Giấy Cổ Điển',
+      isDark: false,
+      metaColor: '#efe6d5',
+      css:
+        'radial-gradient(ellipse 90% 60% at 50% 0%, rgba(255, 250, 240, 0.78) 0%, transparent 70%), ' +
+        'radial-gradient(ellipse 95% 55% at 50% 105%, rgba(158, 128, 88, 0.22) 0%, transparent 70%), ' +
+        'linear-gradient(175deg, #f5eedf 0%, #ece1cc 58%, #e2d3b9 100%)',
+    },
+    {
+      id: 'nordic-fjord',
+      name: 'Băng Sơn Bắc Âu',
+      isDark: false,
+      metaColor: '#e6eef5',
+      css:
+        'radial-gradient(ellipse 85% 52% at 25% 5%, rgba(168, 204, 236, 0.52) 0%, transparent 64%), ' +
+        'radial-gradient(circle at 85% 75%, rgba(190, 215, 235, 0.45) 0%, transparent 55%), ' +
+        'linear-gradient(168deg, #eef4f9 0%, #e1ebf4 55%, #d3e1ee 100%)',
+    },
+    {
+      id: 'plum-velvet',
+      name: 'Nhung Tím Huyền Bí',
+      isDark: true,
+      metaColor: '#1d1322',
+      css:
+        'radial-gradient(ellipse 80% 50% at 70% 8%, rgba(176, 98, 158, 0.3) 0%, transparent 62%), ' +
+        'radial-gradient(circle at 20% 82%, rgba(118, 68, 145, 0.24) 0%, transparent 55%), ' +
+        'linear-gradient(162deg, #26172d 0%, #19101f 55%, #100a14 100%)',
+    },
+  ];
+
   const DEFAULT_SHELF_CONFIG = {
     shelfStyle: 'oak',
-    bgMode: 'color', // color | image
+    bgMode: 'color', // color | preset | image
     bgColor: '#F8F9FA',
+    bgPreset: 'cozy-amber',
     bgAmbient: true,
     bgBlur: 0,
     bgDim: 0,
     placedStickers: [], // Freeform draggable stickers: { id, stickerId, shelfIndex, xPct, yOffset, scale, rotate, flipX }
+    scopedWallpapers: {}, // Map of scopeKey -> { scopeKey, scopeType, scopeValue, label, bgMode, bgColor, bgPreset, bgAmbient, bgBlur, bgDim, updatedAt, removed? }
     lampLit: true,
     updatedAt: 0,
   };
@@ -182,9 +267,13 @@
     BUILTIN_STICKERS,
     SHELF_STYLES,
     BG_COLORS,
+    WALLPAPER_PRESETS,
     DEFAULT_SHELF_CONFIG,
     getBuiltinById(id) {
       return BUILTIN_STICKERS.find((d) => d.id === id) || null;
+    },
+    getPresetById(id) {
+      return WALLPAPER_PRESETS.find((p) => p.id === id) || null;
     },
   };
 })();
