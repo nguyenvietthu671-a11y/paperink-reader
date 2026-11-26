@@ -5100,7 +5100,12 @@
     getSeriesProfile(seriesName, booksArg = null) {
       const books = Array.isArray(booksArg) ? booksArg : this.getBooksForSeries(seriesName);
       const key = this.canonicalSeriesKey(seriesName);
-      const saved = this.state.seriesMeta?.[key];
+      const stripKey = key.replace(/^(the|a|an)\s+/, '');
+      const withTheKey = 'the ' + stripKey;
+      const saved =
+        this.state.seriesMeta?.[key] ||
+        this.state.seriesMeta?.[stripKey] ||
+        this.state.seriesMeta?.[withTheKey];
       const metaMod = window.PaperInkMetadata;
       const base =
         metaMod && typeof metaMod.synthesizeSeriesOverview === 'function'
@@ -5116,6 +5121,9 @@
       if (saved && typeof saved === 'object') {
         return {
           ...base,
+          author: saved.author || base.author,
+          subtitle: saved.subtitle || '',
+          seriesUrl: saved.seriesUrl || '',
           genres: Array.isArray(saved.genres) && saved.genres.length ? saved.genres : base.genres,
           tags: Array.isArray(saved.tags) && saved.tags.length ? saved.tags : base.tags,
           description:

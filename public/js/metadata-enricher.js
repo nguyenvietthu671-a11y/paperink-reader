@@ -1120,21 +1120,33 @@
     }
     tags = tags.slice(0, 6);
 
-    const viGenreTag = tags.find(
-      (t) => !['Theo bộ', 'Tiếng Anh', 'Tiếng Việt', 'Tiếng Nhật', 'Tiếng Trung', 'Tiếng Pháp', 'Tiếng Hàn', 'Tiếng Đức', 'Nổi bật', 'Đọc nhanh', 'Trường thiên'].includes(t)
-    );
-    const authorClause = !isUnknownAuthor(primaryAuthor) ? ` của tác giả ${primaryAuthor}` : '';
-    const genreClause = viGenreTag ? ` thuộc thể loại ${viGenreTag.toLowerCase()}` : '';
-    const introLine = `${seriesName} là bộ truyện${genreClause}${authorClause} (gồm ${safeBooks.length} cuốn trong thư viện của bạn).`;
-
-    let description = introLine;
-    if (firstWithDesc) {
-      const snippet = firstWithDesc.description.trim().slice(0, 520);
-      const bookLabel =
-        firstWithDesc.seriesIndex != null
-          ? `Tập #${firstWithDesc.seriesIndex} (${firstWithDesc.title})`
-          : firstWithDesc.title;
-      description = `${introLine}\n\nNội dung mở đầu — ${bookLabel}: ${snippet}`;
+    const isVi = /[ăâđêôơưàáảãạèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵ]/i.test(seriesName) || tags.includes('Tiếng Việt');
+    let description = '';
+    if (isVi) {
+      const viGenreTag = tags.find(
+        (t) => !['Theo bộ', 'Tiếng Anh', 'Tiếng Việt', 'Tiếng Nhật', 'Tiếng Trung', 'Tiếng Pháp', 'Tiếng Hàn', 'Tiếng Đức', 'Nổi bật', 'Đọc nhanh', 'Trường thiên'].includes(t)
+      );
+      const authorClause = !isUnknownAuthor(primaryAuthor) ? ` của tác giả ${primaryAuthor}` : '';
+      const genreClause = viGenreTag ? ` thuộc thể loại ${viGenreTag.toLowerCase()}` : '';
+      const introLine = `${seriesName} là bộ truyện${genreClause}${authorClause} (gồm ${safeBooks.length} cuốn trong thư viện của bạn).`;
+      description = introLine;
+      if (firstWithDesc) {
+        const snippet = firstWithDesc.description.trim().slice(0, 520);
+        const bookLabel =
+          firstWithDesc.seriesIndex != null
+            ? `Tập #${firstWithDesc.seriesIndex} (${firstWithDesc.title})`
+            : firstWithDesc.title;
+        description = `${introLine}\n\nNội dung mở đầu — ${bookLabel}: ${snippet}`;
+      }
+    } else {
+      const genreStr = genres.filter((g) => g !== 'General Fiction').slice(0, 2).join(' and ') || 'acclaimed';
+      const authorClause = !isUnknownAuthor(primaryAuthor) ? ` written by ${primaryAuthor}` : '';
+      const introLine = `${seriesName} is a ${genreStr} series${authorClause}.`;
+      description = introLine;
+      if (firstWithDesc) {
+        const snippet = firstWithDesc.description.trim().slice(0, 520);
+        description = `${introLine}\n\n${snippet}`;
+      }
     }
 
     return {

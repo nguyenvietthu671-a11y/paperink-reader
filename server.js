@@ -368,6 +368,7 @@ async function main() {
             if (!stateStore.state.seriesMeta) stateStore.state.seriesMeta = {};
             stateStore.state.seriesMeta[sKey] = {
               name: series,
+              author: result.author || author || '',
               subtitle: result.subtitle || '',
               seriesUrl: result.seriesUrl || '',
               genres: result.genres,
