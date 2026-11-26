@@ -601,6 +601,78 @@
     },
   ];
 
+  // Comprehensive Genre Taxonomy Descriptions (Bilingual / Vietnamese)
+  const GENRE_TAXONOMY_DESCRIPTIONS = {
+    'Mystery & Detective': 'Tập hợp các tác phẩm điều tra phá án ly kỳ, những vụ án bí ẩn, logic suy luận sắc bén và những màn đấu trí kịch tính giữa thám tử và tội phạm.',
+    'Trinh thám': 'Tập hợp các tác phẩm điều tra phá án ly kỳ, những vụ án bí ẩn, logic suy luận sắc bén và những màn đấu trí kịch tính giữa thám tử và tội phạm.',
+    'Thriller & Suspense': 'Tiết tấu dồn dập, hồi hộp nghẹt thở, những âm mưu nguy hiểm, thế giới điệp viên và những tình huống ngàn cân treo sợi tóc.',
+    'Giật gân': 'Tiết tấu dồn dập, hồi hộp nghẹt thở, những âm mưu nguy hiểm, thế giới điệp viên và những tình huống ngàn cân treo sợi tóc.',
+    'Sci-Fi': 'Khám phá tương lai nhân loại, công nghệ tối tân, trí tuệ nhân tạo, du hành vũ trụ và những chiều không gian song song kỳ vĩ.',
+    'Khoa học VT': 'Khám phá tương lai nhân loại, công nghệ tối tân, trí tuệ nhân tạo, du hành vũ trụ và những chiều không gian song song kỳ vĩ.',
+    'Fantasy': 'Thế giới phép thuật nhiệm màu, thần thoại, những vùng đất kỳ bí, kiếm hiệp, tiên hiệp và các cuộc phiêu lưu huyền thoại.',
+    'Kỳ ảo': 'Thế giới phép thuật nhiệm màu, thần thoại, những vùng đất kỳ bí, kiếm hiệp, tiên hiệp và các cuộc phiêu lưu huyền thoại.',
+    'Romance': 'Những câu chuyện tình yêu ngọt ngào, sâu lắng, những cung bậc cảm xúc rung động trái tim và hành trình gắn kết lứa đôi.',
+    'Tình cảm': 'Những câu chuyện tình yêu ngọt ngào, sâu lắng, những cung bậc cảm xúc rung động trái tim và hành trình gắn kết lứa đôi.',
+    'Horror': 'Không khí rùng rợn, ám ảnh, những hiện tượng siêu nhiên kỳ bí và nỗi sợ hãi tâm lý sâu thẳm.',
+    'Kinh dị': 'Không khí rùng rợn, ám ảnh, những hiện tượng siêu nhiên kỳ bí và nỗi sợ hãi tâm lý sâu thẳm.',
+    'Historical Fiction': 'Tái hiện sống động các thời kỳ hào hùng, biến cố lịch sử, văn hóa và thân phận con người qua các giai đoạn thăng trầm.',
+    'Lịch sử': 'Tái hiện sống động các thời kỳ hào hùng, biến cố lịch sử, văn hóa và thân phận con người qua các giai đoạn thăng trầm.',
+    'Classic Literature': 'Những kiệt tác văn chương vượt thời gian của các đại văn hào thế giới, mang giá trị nhân văn sâu sắc và tính nghệ thuật mẫu mực.',
+    'Kinh điển': 'Những kiệt tác văn chương vượt thời gian của các đại văn hào thế giới, mang giá trị nhân văn sâu sắc và tính nghệ thuật mẫu mực.',
+    'Business & Finance': 'Kiến thức thực chiến về kinh tế, đầu tư tài chính, quản trị doanh nghiệp, khởi nghiệp và tư duy làm giàu thông minh.',
+    'Kinh doanh': 'Kiến thức thực chiến về kinh tế, đầu tư tài chính, quản trị doanh nghiệp, khởi nghiệp và tư duy làm giàu thông minh.',
+    'Self-Help & Productivity': 'Rèn luyện thói quen tích cực, nâng cao hiệu suất làm việc, làm chủ tư duy và phát triển bản thân mỗi ngày.',
+    'Phát triển bản thân': 'Rèn luyện thói quen tích cực, nâng cao hiệu suất làm việc, làm chủ tư duy và phát triển bản thân mỗi ngày.',
+    'Psychology & Philosophy': 'Thấu hiểu chiều sâu tâm lý con người, quy luật hành vi, triết lý sống khắc kỷ và những chiêm nghiệm nhân sinh sâu sắc.',
+    'Tâm lý · Triết học': 'Thấu hiểu chiều sâu tâm lý con người, quy luật hành vi, triết lý sống khắc kỷ và những chiêm nghiệm nhân sinh sâu sắc.',
+    'Science & Tech': 'Những đột phá khoa học, vật lý, sinh học, công nghệ lập trình và tri thức định hình tương lai thế giới.',
+    'Khoa học · Công nghệ': 'Những đột phá khoa học, vật lý, sinh học, công nghệ lập trình và tri thức định hình tương lai thế giới.',
+    'Biography & Memoir': 'Những trang đời chân thực, câu chuyện vượt khó truyền cảm hứng và di sản của các nhân vật kiệt xuất.',
+    'Tiểu sử · Hồi ký': 'Những trang đời chân thực, câu chuyện vượt khó truyền cảm hứng và di sản của các nhân vật kiệt xuất.',
+    'Light Novel & Manga': 'Phong cách tiểu thuyết trẻ trung, phiêu lưu thế giới khác (Isekai), học đường thanh xuân và văn hóa đương đại.',
+    'Light Novel': 'Phong cách tiểu thuyết trẻ trung, phiêu lưu thế giới khác (Isekai), học đường thanh xuân và văn hóa đương đại.',
+    'Young Adult': 'Thanh xuân nhiệt huyết, những bỡ ngỡ đầu đời, tình bạn, tình yêu học đường và hành trình tìm kiếm bản thân.',
+    'Tuổi mới lớn': 'Thanh xuân nhiệt huyết, những bỡ ngỡ đầu đời, tình bạn, tình yêu học đường và hành trình tìm kiếm bản thân.',
+    'General Fiction': 'Những góc nhìn đa chiều về cuộc sống, bức tranh xã hội hiện đại và chiều sâu nội tâm con người.',
+    'Văn học': 'Những góc nhìn đa chiều về cuộc sống, bức tranh xã hội hiện đại và chiều sâu nội tâm con người.',
+    'Poetry & Drama': 'Nghệ thuật ngôn từ tinh tế, cảm xúc dạt dào qua những vần thơ bất hủ và các tác phẩm kịch nghệ sâu sắc.',
+    'Thơ & Kịch': 'Nghệ thuật ngôn từ tinh tế, cảm xúc dạt dào qua những vần thơ bất hủ và các tác phẩm kịch nghệ sâu sắc.',
+    'Travel & Adventure': 'Hành trình khám phá những vùng đất mới lạ, văn hóa muôn màu và tinh thần phiêu lưu phóng khoáng.',
+    'Du ký': 'Hành trình khám phá những vùng đất mới lạ, văn hóa muôn màu và tinh thần phiêu lưu phóng khoáng.',
+    'Religion & Spirituality': 'Chiêm nghiệm tâm linh, tôn giáo, tìm kiếm sự bình an nội tâm và ý nghĩa cuộc sống.',
+    'Tâm linh': 'Chiêm nghiệm tâm linh, tôn giáo, tìm kiếm sự bình an nội tâm và ý nghĩa cuộc sống.',
+    'Humor & Comedy': 'Tiếng cười sảng khoái, góc nhìn hóm hỉnh, châm biếm sâu cay và niềm vui tích cực trong cuộc sống.',
+    'Hài hước': 'Tiếng cười sảng khoái, góc nhìn hóm hỉnh, châm biếm sâu cay và niềm vui tích cực trong cuộc sống.',
+    'Wuxia & Xianxia': 'Thế giới võ lâm giang hồ, ân oán tình thù, tu tiên luyện khí, phi thăng tiên giới và tinh thần hiệp nghĩa hào hùng.',
+    'Kiếm hiệp': 'Thế giới võ lâm giang hồ, ân oán tình thù, tu tiên luyện khí, phi thăng tiên giới và tinh thần hiệp nghĩa hào hùng.',
+  };
+
+  function getGenreTaxonomyDescription(genreName, books = []) {
+    const raw = String(genreName || '').trim();
+    if (!raw) return 'Tuyển tập các tác phẩm đặc sắc trong thư viện của bạn.';
+    if (GENRE_TAXONOMY_DESCRIPTIONS[raw]) {
+      return GENRE_TAXONOMY_DESCRIPTIONS[raw];
+    }
+    const lower = raw.toLowerCase();
+    for (const [key, desc] of Object.entries(GENRE_TAXONOMY_DESCRIPTIONS)) {
+      if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) {
+        return desc;
+      }
+    }
+    for (const rule of GENRE_RULES) {
+      if (rule.genre.toLowerCase() === lower || rule.tag.toLowerCase() === lower || rule.re.test(raw)) {
+        if (GENRE_TAXONOMY_DESCRIPTIONS[rule.genre]) return GENRE_TAXONOMY_DESCRIPTIONS[rule.genre];
+        if (GENRE_TAXONOMY_DESCRIPTIONS[rule.tag]) return GENRE_TAXONOMY_DESCRIPTIONS[rule.tag];
+      }
+    }
+    const safeBooks = Array.isArray(books) ? books : [];
+    const sample = safeBooks.slice(0, 3).map((b) => b.title).filter(Boolean).join(', ');
+    if (sample) {
+      return `Tuyển tập các tác phẩm thể loại ${raw} (${safeBooks.length} cuốn sách trong thư viện của bạn), tiêu biểu gồm: ${sample}.`;
+    }
+    return `Tuyển tập các tác phẩm thuộc thể loại ${raw} được tuyển chọn trong kho sách của bạn.`;
+  }
+
   // Clean raw OPF subjects / Google Books categories into canonical genres
   function normalizeSubjectsToGenres(subjectsRaw, { strictCanonical = false } = {}) {
     const list = Array.isArray(subjectsRaw) ? subjectsRaw : subjectsRaw ? [subjectsRaw] : [];
@@ -1285,5 +1357,7 @@
     enrichBookOnline,
     synthesizeSeriesOverview,
     enrichSeriesOnline,
+    getGenreTaxonomyDescription,
+    GENRE_TAXONOMY_DESCRIPTIONS,
   };
 });

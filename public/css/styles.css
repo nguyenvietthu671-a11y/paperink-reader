@@ -6518,7 +6518,63 @@ a.goodreads-pill:hover {
 }
 
 .series-shelf-overview.collapsed {
-  padding-bottom: 12px;
+  margin: 2px 0 10px;
+  padding: 6px 14px;
+  border-radius: 14px;
+}
+
+.series-shelf-overview.collapsed .series-overview-top {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 10px !important;
+  flex-wrap: nowrap !important;
+  margin: 0 !important;
+}
+
+.series-shelf-overview.collapsed .series-overview-badges {
+  display: flex !important;
+  align-items: center !important;
+  flex: 1 !important;
+  min-width: 0 !important;
+  flex-wrap: nowrap !important;
+  gap: 8px !important;
+}
+
+/* Hide Goodreads pill, genre badges, Aa typography picker, and edit button when collapsed */
+.series-shelf-overview.collapsed .goodreads-pill,
+.series-shelf-overview.collapsed .col-genre-mini,
+.series-shelf-overview.collapsed .meta-font-picker-pill,
+.series-shelf-overview.collapsed .inline-series-info-link {
+  display: none !important;
+}
+
+/* Strictly 1 line preview text when collapsed */
+.series-overview-1line-preview {
+  display: none;
+}
+
+.series-shelf-overview.collapsed .series-overview-1line-preview {
+  display: block !important;
+  flex: 1 !important;
+  min-width: 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  font-size: 0.82rem !important;
+  line-height: 1.3 !important;
+  color: var(--ink-muted) !important;
+  font-family: var(--meta-font, inherit) !important;
+}
+
+.series-shelf-overview.collapsed .series-overview-1line-preview strong {
+  color: var(--ink);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.series-shelf-overview.collapsed .series-overview-toggle-btn {
+  flex-shrink: 0 !important;
 }
 
 .series-shelf-overview.collapsed .series-overview-scroll,
@@ -6526,8 +6582,21 @@ a.goodreads-pill:hover {
   display: none !important;
 }
 
+.inset-section.collapsed .meta-font-picker-pill,
 .inset-section.collapsed .desc-body-group {
   display: none !important;
+}
+
+.col-genre-desc {
+  font-family: var(--meta-font, inherit);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--ink-muted);
+  margin: 4px 0 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 @media (max-width: 640px) {

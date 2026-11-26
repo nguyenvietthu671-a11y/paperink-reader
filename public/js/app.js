@@ -207,6 +207,7 @@
       this.deferredInstallPrompt = null;
       this.activeBookInfoId = null;
       this.activeSeriesInfoName = null;
+      this.activeGenreInfoName = null;
       this.enrichingBookIds = new Set();
       this.enrichingSeriesKeys = new Set();
       this.knownServerBookIds = null;
@@ -218,6 +219,7 @@
         bookReviews: {},
         bookMetaOverrides: {},
         seriesMeta: {},
+        genreMeta: {},
         inkNotes: {},
         folders: [],
         hiddenBookIds: {},
@@ -1716,8 +1718,10 @@
       const isMobile = window.innerWidth < 640;
       const fallbackMap = {
         series: isMobile ? 110 : 135,
+        genre: isMobile ? 110 : 135,
         book: isMobile ? 175 : 200,
         'series-modal': isMobile ? 175 : 200,
+        'genre-modal': isMobile ? 175 : 200,
       };
       const val = this.state.descHeights?.[targetKey];
       return typeof val === 'number' && val >= 55 && val <= 500 ? val : fallbackMap[targetKey] || 150;
@@ -1729,18 +1733,58 @@
       this.scheduleSync();
     }
 
+    getGenreDescription(genreName, books = []) {
+      const raw = String(genreName || '').trim();
+      if (!raw) return 'Tuyển tập các tác phẩm trong thư viện của bạn.';
+      const ov = this.state.genreMeta?.[raw]?.description;
+      if (ov && typeof ov === 'string' && ov.trim()) {
+        return ov.trim();
+      }
+      const metaMod = window.PaperInkMetadata;
+      if (metaMod?.getGenreTaxonomyDescription) {
+        return metaMod.getGenreTaxonomyDescription(raw, books);
+      }
+      return `Tuyển tập các tác phẩm thuộc thể loại ${raw} trong thư viện của bạn.`;
+    }
+
+    saveGenreMetaOverride(genreName, fields = {}) {
+      const name = String(genreName || '').trim();
+      if (!name) return;
+      const description = String(fields.description || '').trim();
+      if (!this.state.genreMeta) this.state.genreMeta = {};
+      this.state.genreMeta[name] = {
+        name,
+        description,
+        manual: true,
+        updatedAt: Date.now(),
+      };
+      this.scheduleSync();
+      this.renderCurrentRoute();
+      if (this.activeGenreInfoName === name) {
+        this.renderGenreInfoModal(name);
+      }
+      this.toast(`Đã lưu mô tả cho thể loại "${name}"!`);
+    }
+
+    getBooksForGenre(genreName) {
+      const target = String(genreName || '').trim().toLowerCase();
+      return this.getMergedBooks().filter((b) =>
+        (b.genres || []).some((g) => g.toLowerCase() === target)
+      );
+    }
+
     toggleDescCollapse(targetKey) {
       if (!this.state.descCollapsed) this.state.descCollapsed = {};
       this.state.descCollapsed[targetKey] = !this.state.descCollapsed[targetKey];
       const isCollapsed = Boolean(this.state.descCollapsed[targetKey]);
       this.scheduleSync();
-      if (targetKey === 'series') {
+      if (targetKey === 'series' || targetKey === 'genre') {
         const box = document.getElementById('series-shelf-overview');
         if (box) box.classList.toggle('collapsed', isCollapsed);
-        const btn = document.querySelector('[data-toggle-series-overview-collapse]');
+        const btn = document.querySelector('[data-toggle-shelf-overview-collapse], [data-toggle-series-overview-collapse]');
         if (btn) {
           btn.textContent = isCollapsed ? 'Mở rộng' : 'Thu nhỏ';
-          btn.title = isCollapsed ? 'Mở rộng mô tả bộ truyện' : 'Thu nhỏ mô tả bộ truyện';
+          btn.title = isCollapsed ? 'Mở rộng mô tả' : 'Thu nhỏ mô tả';
         }
       } else {
         const sec = document.querySelector(`[data-desc-section="${targetKey}"]`);
@@ -1786,7 +1830,7 @@
 
           const presets = handleEl.querySelectorAll('.desc-size-chip');
           presets.forEach((p) => p.classList.remove('active'));
-          if (targetKey === 'series') {
+          if (targetKey === 'series' || targetKey === 'genre') {
             if (finalH <= 95) handleEl.querySelector('[data-set-desc-size="compact"]')?.classList.add('active');
             else if (finalH > 180) handleEl.querySelector('[data-set-desc-size="large"]')?.classList.add('active');
             else handleEl.querySelector('[data-set-desc-size="normal"]')?.classList.add('active');
@@ -2928,8 +2972,10 @@
     renderSeriesShelfOverview(scopedBooks) {
       const box = document.getElementById('series-shelf-overview');
       if (!box) return;
+      const isSeries = this.drilldown?.type === 'series';
+      const isGenre = this.drilldown?.type === 'genre';
       const show =
-        this.drilldown?.type === 'series' &&
+        (isSeries || isGenre) &&
         !this.editStickersMode &&
         !this.selectMode &&
         !this.searchQuery &&
@@ -2938,27 +2984,42 @@
       box.classList.toggle('hidden', !show);
       if (!show) return;
 
-      const seriesName = this.drilldown.value;
-      const key = this.canonicalSeriesKey(seriesName);
-      if (key && !this.state.seriesMeta?.[key] && !this.enrichingSeriesKeys.has(key)) {
-        this.autoEnrichSeries(seriesName, { silent: true });
-      }
-
-      const profile = this.getSeriesProfile(seriesName, scopedBooks);
-      const desc = (profile.description || '').trim();
-      const isCollapsed = Boolean(this.state.descCollapsed?.series);
-      const currentH = this.getDescHeight('series');
+      const targetKey = isSeries ? 'series' : 'genre';
+      const targetName = this.drilldown.value;
+      const isCollapsed = Boolean(this.state.descCollapsed?.[targetKey]);
+      const currentH = this.getDescHeight(targetKey);
       box.classList.toggle('collapsed', isCollapsed);
 
-      const genresHtml = (profile.genres || [])
-        .slice(0, 3)
-        .map((g) => `<span class="col-genre-mini">${escHtml(g)}</span>`)
-        .join('');
-      const grBadge = profile.seriesUrl
-        ? `<a class="goodreads-pill" href="${escHtml(profile.seriesUrl)}" target="_blank" rel="noopener noreferrer" title="Mở trang bộ truyện trên Goodreads">Goodreads${profile.subtitle ? ` · ${escHtml(profile.subtitle.split('•')[0].trim())}` : ''}</a>`
-        : profile.enrichedOnline
-        ? `<span class="goodreads-pill">Goodreads</span>`
-        : '';
+      let desc = '';
+      let grBadge = '';
+      let genresHtml = '';
+      let detailBtnHtml = '';
+      let previewTitle = '';
+
+      if (isSeries) {
+        const key = this.canonicalSeriesKey(targetName);
+        if (key && !this.state.seriesMeta?.[key] && !this.enrichingSeriesKeys.has(key)) {
+          this.autoEnrichSeries(targetName, { silent: true });
+        }
+        const profile = this.getSeriesProfile(targetName, scopedBooks);
+        desc = (profile.description || '').trim();
+        genresHtml = (profile.genres || [])
+          .slice(0, 3)
+          .map((g) => `<span class="col-genre-mini">${escHtml(g)}</span>`)
+          .join('');
+        grBadge = profile.seriesUrl
+          ? `<a class="goodreads-pill" href="${escHtml(profile.seriesUrl)}" target="_blank" rel="noopener noreferrer" title="Mở trang bộ truyện trên Goodreads">Goodreads${profile.subtitle ? ` · ${escHtml(profile.subtitle.split('•')[0].trim())}` : ''}</a>`
+          : profile.enrichedOnline
+          ? `<span class="goodreads-pill">Goodreads</span>`
+          : '';
+        detailBtnHtml = `<button class="inline-series-info-link" data-open-series-info="${escHtml(targetName)}" type="button">Chi tiết &amp; Sửa bộ truyện</button>`;
+        previewTitle = targetName;
+      } else {
+        desc = this.getGenreDescription(targetName, scopedBooks);
+        grBadge = `<span class="goodreads-pill tabular">${scopedBooks.length} cuốn sách</span>`;
+        detailBtnHtml = `<button class="inline-series-info-link" data-open-genre-info="${escHtml(targetName)}" type="button">Chi tiết &amp; Sửa thể loại</button>`;
+        previewTitle = `Thể loại ${targetName}`;
+      }
 
       box.innerHTML = `
         <div class="series-overview-top">
@@ -2971,34 +3032,37 @@
                 ${this.renderMetaFontOptions()}
               </select>
             </div>
-            <button class="series-overview-toggle-btn" data-toggle-series-overview-collapse type="button" title="${isCollapsed ? 'Mở rộng mô tả bộ truyện' : 'Thu nhỏ mô tả bộ truyện'}">
+            <span class="series-overview-1line-preview" title="${escHtml(desc)}">
+              <strong>${escHtml(previewTitle)}:</strong> ${escHtml(desc.replace(/\s+/g, ' '))}
+            </span>
+            <button class="series-overview-toggle-btn" data-toggle-shelf-overview-collapse="${targetKey}" type="button" title="${isCollapsed ? 'Mở rộng mô tả' : 'Thu nhỏ mô tả'}">
               ${isCollapsed ? 'Mở rộng' : 'Thu nhỏ'}
             </button>
           </div>
-          <button class="inline-series-info-link" data-open-series-info="${escHtml(seriesName)}" type="button">Chi tiết &amp; Sửa bộ truyện</button>
+          ${detailBtnHtml}
         </div>
         ${
           desc
             ? `<div class="series-overview-scroll" style="height:${currentH}px; max-height:${currentH}px;">
                  <p class="series-overview-text">${escHtml(desc)}</p>
                </div>
-               <div class="desc-resize-bar" data-resize-desc="series" title="Kéo để chỉnh độ cao (hoặc chọn kích cỡ)">
+               <div class="desc-resize-bar" data-resize-desc="${targetKey}" title="Kéo để chỉnh độ cao (hoặc chọn kích cỡ)">
                  <span class="desc-resize-handle-pill"></span>
                  <div class="desc-size-presets">
-                   <button class="desc-size-chip ${currentH <= 95 ? 'active' : ''}" data-set-desc-size="compact" data-desc-target="series" type="button" title="Thu gọn (85px)">Gọn</button>
-                   <button class="desc-size-chip ${currentH > 95 && currentH <= 180 ? 'active' : ''}" data-set-desc-size="normal" data-desc-target="series" type="button" title="Vừa vặn (145px)">Vừa</button>
-                   <button class="desc-size-chip ${currentH > 180 ? 'active' : ''}" data-set-desc-size="large" data-desc-target="series" type="button" title="Mở rộng (260px)">Lớn</button>
+                   <button class="desc-size-chip ${currentH <= 95 ? 'active' : ''}" data-set-desc-size="compact" data-desc-target="${targetKey}" type="button" title="Thu gọn (85px)">Gọn</button>
+                   <button class="desc-size-chip ${currentH > 95 && currentH <= 180 ? 'active' : ''}" data-set-desc-size="normal" data-desc-target="${targetKey}" type="button" title="Vừa vặn (145px)">Vừa</button>
+                   <button class="desc-size-chip ${currentH > 180 ? 'active' : ''}" data-set-desc-size="large" data-desc-target="${targetKey}" type="button" title="Mở rộng (260px)">Lớn</button>
                  </div>
                </div>`
-            : `<p class="muted-text" style="margin:0;font-size:0.83rem">Đang tải mô tả bộ truyện từ Goodreads…</p>`
+            : `<p class="muted-text" style="margin:0;font-size:0.83rem">Đang tải mô tả…</p>`
         }
       `;
 
       if (desc) {
-        const handle = box.querySelector('.desc-resize-bar[data-resize-desc="series"]');
+        const handle = box.querySelector(`.desc-resize-bar[data-resize-desc="${targetKey}"]`);
         const scrollEl = box.querySelector('.series-overview-scroll');
         if (handle && scrollEl) {
-          this.initDescResizeDrag(handle, scrollEl, 'series', 65, 360);
+          this.initDescResizeDrag(handle, scrollEl, targetKey, 65, 360);
         }
       }
     }
@@ -3895,6 +3959,11 @@
                   <span class="tabular">${g.readCount}/${g.count}</span>
                 </div>
               `
+              : type === 'genre'
+              ? `
+                <p class="col-series-desc col-genre-desc">${escHtml(this.getGenreDescription(g.name, g.books))}</p>
+                <div class="col-sub-meta">${g.activeCount > 0 ? `${g.activeCount} đang đọc · ${g.count} đầu sách` : `${g.count} đầu sách`}</div>
+              `
               : `<div class="col-sub-meta">${
                   type === 'author'
                     ? `${new Set(g.books.map((b) => b.series).filter(Boolean)).size || 0} bộ truyện`
@@ -3932,6 +4001,8 @@
                     ${
                       type === 'series'
                         ? `<button class="series-more-btn" data-open-series-info="${escHtml(g.name)}" type="button" title="Thể loại & mô tả bộ truyện" aria-label="Xem thể loại và mô tả bộ truyện ${escHtml(g.name)}">${ICONS.moreVert}</button>`
+                        : type === 'genre'
+                        ? `<button class="series-more-btn" data-open-genre-info="${escHtml(g.name)}" type="button" title="Mô tả thể loại" aria-label="Xem và sửa mô tả thể loại ${escHtml(g.name)}">${ICONS.moreVert}</button>`
                         : ''
                     }
                   </div>
@@ -5300,9 +5371,153 @@
       return base;
     }
 
+    openGenreInfoModal(genreName) {
+      if (!genreName) return;
+      this.activeBookInfoId = null;
+      this.activeSeriesInfoName = null;
+      this.activeGenreInfoName = genreName;
+      this.closeAllSheets();
+      const titleEl = document.getElementById('book-info-title');
+      if (titleEl) titleEl.textContent = 'Thông tin Thể loại';
+      this.renderGenreInfoModal(genreName);
+      document.getElementById('book-info-backdrop')?.classList.add('open');
+      document.getElementById('book-info-modal')?.classList.add('open');
+    }
+
+    renderGenreInfoModal(genreName) {
+      const body = document.getElementById('book-info-body');
+      if (!body) return;
+      const books = this.getBooksForGenre(genreName);
+      const desc = this.getGenreDescription(genreName, books);
+      const readCount = books.filter((b) => (b.progress?.bookPercent || 0) >= 95).length;
+      const pct = books.length ? Math.round((readCount / books.length) * 100) : 0;
+      const isCollapsed = Boolean(this.state.descCollapsed?.['genre-modal']);
+      const genreModalDescH = this.getDescHeight('genre-modal');
+
+      const fanCovers = books.slice(0, 3);
+      const fanHtml = fanCovers
+        .map((b, idx) => `<div class="fan-cover fan-${idx}">${this.renderCoverMarkup(b)}</div>`)
+        .join('');
+
+      body.innerHTML = `
+        <div class="book-info-hero series-info-hero">
+          <div class="collection-fan series-modal-fan">${fanHtml}</div>
+          <div class="book-info-meta">
+            <h3 class="book-info-name">Thể loại: ${escHtml(genreName)}</h3>
+            <div class="book-info-status-row">
+              <span class="pct-pill tabular">${books.length} đầu sách · Đã đọc ${readCount}/${books.length}</span>
+              <span class="goodreads-pill tabular">Chủ đề thư viện</span>
+            </div>
+          </div>
+        </div>
+
+        ${
+          pct > 0
+            ? `<div class="book-info-prog-bar"><div class="prog-bar-track"><div class="prog-bar-fill" style="width:${pct}%"></div></div></div>`
+            : ''
+        }
+
+        <div class="book-meta-actions">
+          <button class="apple-pill-btn secondary small" id="toggle-genre-edit-btn" type="button">
+            ${ICONS.tag}
+            <span>Chỉnh sửa mô tả thể loại</span>
+          </button>
+          <button class="apple-pill-btn secondary small" data-open-genre-wallpaper="${escHtml(genreName)}" type="button">
+            ${ICONS.sparkles}
+            <span>Nền riêng thể loại</span>
+          </button>
+        </div>
+
+        <div id="genre-meta-edit-panel" class="meta-edit-panel hidden">
+          <div class="inset-group">
+            <div class="inset-row stack-item">
+              <div class="meta-edit-grid">
+                <label class="meta-edit-field">
+                  <span class="meta-edit-label">Mô tả thể loại (Genre Description)</span>
+                  <textarea id="genre-edit-desc" class="book-review-textarea" rows="4" placeholder="Nhập phần giới thiệu về đặc trưng, phong cách và chủ đề của thể loại này…">${escHtml(desc)}</textarea>
+                </label>
+              </div>
+              <div class="book-info-actions">
+                <button class="apple-pill-btn small" data-save-genre-meta="${escHtml(genreName)}" type="button">Lưu mô tả thể loại</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="inset-section ${isCollapsed ? 'collapsed' : ''}" data-desc-section="genre-modal">
+          <div class="inset-section-header-row">
+            <div class="inset-section-label">Mô tả thể loại (Genre Description)</div>
+            <div class="inset-section-actions">
+              <div class="meta-font-picker-pill" title="Đổi phông chữ mô tả &amp; tác giả">
+                <span class="meta-font-label-icon">Aa</span>
+                <select class="meta-font-inline-select" data-change-meta-font title="Đổi phông chữ mô tả &amp; tác giả">
+                  ${this.renderMetaFontOptions()}
+                </select>
+              </div>
+              <button class="desc-collapse-toggle-btn" data-toggle-desc-collapse="genre-modal" type="button" title="${isCollapsed ? 'Mở rộng mô tả' : 'Thu nhỏ mô tả'}">
+                ${isCollapsed ? 'Mở rộng' : 'Thu nhỏ'}
+              </button>
+            </div>
+          </div>
+          <div class="inset-group desc-body-group">
+            <div class="inset-row stack-item">
+              <div class="book-desc-scroll-wrap" style="height:${genreModalDescH}px; max-height:${genreModalDescH}px;">
+                <p class="book-info-desc">${escHtml(desc)}</p>
+              </div>
+              <div class="desc-resize-bar" data-resize-desc="genre-modal" title="Kéo để chỉnh độ cao (hoặc chọn kích cỡ)">
+                <span class="desc-resize-handle-pill"></span>
+                <div class="desc-size-presets">
+                  <button class="desc-size-chip ${genreModalDescH <= 125 ? 'active' : ''}" data-set-desc-size="compact" data-desc-target="genre-modal" type="button" title="Thu gọn (110px)">Gọn</button>
+                  <button class="desc-size-chip ${genreModalDescH > 125 && genreModalDescH <= 240 ? 'active' : ''}" data-set-desc-size="normal" data-desc-target="genre-modal" type="button" title="Vừa vặn (200px)">Vừa</button>
+                  <button class="desc-size-chip ${genreModalDescH > 240 ? 'active' : ''}" data-set-desc-size="large" data-desc-target="genre-modal" type="button" title="Mở rộng (320px)">Lớn</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="inset-section">
+          <div class="inset-section-label">Sách trong thể loại (${books.length} cuốn)</div>
+          <div class="inset-group">
+            <div class="series-books-mini-list">
+              ${books
+                .slice(0, 16)
+                .map((b) => {
+                  const bp = Math.round(b.progress?.bookPercent || 0);
+                  return `
+                    <button class="series-book-mini-row" data-read-from-modal="${escHtml(b.id)}" type="button">
+                      <span class="series-mini-idx tabular">•</span>
+                      <span class="series-mini-title">${escHtml(b.title)}</span>
+                      <span class="series-mini-pct tabular">${bp > 0 ? `${bp}%` : 'Đọc'}</span>
+                    </button>
+                  `;
+                })
+                .join('')}
+              ${
+                books.length > 16
+                  ? `<div class="series-mini-more muted-text">… và ${books.length - 16} cuốn khác trong thể loại này</div>`
+                  : ''
+              }
+            </div>
+          </div>
+        </div>
+
+        <div class="book-info-actions" style="margin-top:12px">
+          <button class="apple-pill-btn small" data-filter-genre="${escHtml(genreName)}" type="button">Xem toàn bộ kệ thể loại</button>
+        </div>
+      `;
+
+      const handle = body.querySelector('.desc-resize-bar[data-resize-desc="genre-modal"]');
+      const scrollEl = body.querySelector('.book-desc-scroll-wrap');
+      if (handle && scrollEl) {
+        this.initDescResizeDrag(handle, scrollEl, 'genre-modal', 80, 420);
+      }
+    }
+
     openSeriesInfoModal(seriesName) {
       if (!seriesName) return;
       this.activeBookInfoId = null;
+      this.activeGenreInfoName = null;
       this.activeSeriesInfoName = seriesName;
       this.closeAllSheets();
       const titleEl = document.getElementById('book-info-title');
@@ -5600,6 +5815,7 @@
     openBookInfoModal(bookId) {
       if (!bookId) return;
       this.activeSeriesInfoName = null;
+      this.activeGenreInfoName = null;
       this.activeBookInfoId = bookId;
       this.closeAllSheets();
       const titleEl = document.getElementById('book-info-title');
@@ -6278,11 +6494,12 @@
         }
       });
       document.addEventListener('click', (e) => {
-        const toggleSeriesBtn = e.target.closest('[data-toggle-series-overview-collapse]');
-        if (toggleSeriesBtn) {
+        const toggleShelfBtn = e.target.closest('[data-toggle-shelf-overview-collapse], [data-toggle-series-overview-collapse]');
+        if (toggleShelfBtn) {
           e.preventDefault();
           e.stopPropagation();
-          this.toggleDescCollapse('series');
+          const targetKey = toggleShelfBtn.dataset.toggleShelfOverviewCollapse || this.drilldown?.type || 'series';
+          this.toggleDescCollapse(targetKey);
           return;
         }
 
@@ -6303,7 +6520,7 @@
           const targetKey = sizeBtn.dataset.descTarget || resizeBar?.dataset?.resizeDesc || 'series';
 
           let targetH = 145;
-          if (targetKey === 'series') {
+          if (targetKey === 'series' || targetKey === 'genre') {
             targetH = sizeMode === 'compact' ? 85 : sizeMode === 'large' ? 260 : 145;
           } else {
             targetH = sizeMode === 'compact' ? 110 : sizeMode === 'large' ? 320 : 200;
@@ -6719,6 +6936,13 @@
           return;
         }
 
+        const genreInfoBtn = e.target.closest('[data-open-genre-info]');
+        if (genreInfoBtn) {
+          e.stopPropagation();
+          this.openGenreInfoModal(genreInfoBtn.dataset.openGenreInfo);
+          return;
+        }
+
         const toggleOverviewBtn = e.target.closest('[data-toggle-series-overview]');
         if (toggleOverviewBtn) {
           e.stopPropagation();
@@ -6972,6 +7196,13 @@
           this.openStudioSheet({ type: 'series', value: sName });
           return;
         }
+        const genreWpBtn = e.target.closest('[data-open-genre-wallpaper]');
+        if (genreWpBtn) {
+          const gName = genreWpBtn.dataset.openGenreWallpaper;
+          this.setRoute('genres', { type: 'genre', value: gName, label: gName });
+          this.openStudioSheet({ type: 'genre', value: gName });
+          return;
+        }
         const autoSeriesBtn = e.target.closest('[data-auto-enrich-series]');
         if (autoSeriesBtn) {
           this.autoEnrichSeries(autoSeriesBtn.dataset.autoEnrichSeries, { silent: false });
@@ -6981,12 +7212,23 @@
           document.getElementById('series-meta-edit-panel')?.classList.toggle('hidden');
           return;
         }
+        if (e.target.closest('#toggle-genre-edit-btn')) {
+          document.getElementById('genre-meta-edit-panel')?.classList.toggle('hidden');
+          return;
+        }
         const saveSeriesBtn = e.target.closest('[data-save-series-meta]');
         if (saveSeriesBtn) {
           this.saveSeriesMetaOverride(saveSeriesBtn.dataset.saveSeriesMeta, {
             genres: document.getElementById('series-edit-genres')?.value || '',
             tags: document.getElementById('series-edit-tags')?.value || '',
             description: document.getElementById('series-edit-desc')?.value || '',
+          });
+          return;
+        }
+        const saveGenreBtn = e.target.closest('[data-save-genre-meta]');
+        if (saveGenreBtn) {
+          this.saveGenreMetaOverride(saveGenreBtn.dataset.saveGenreMeta, {
+            description: document.getElementById('genre-edit-desc')?.value || '',
           });
           return;
         }
