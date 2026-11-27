@@ -1,17 +1,17 @@
 <!DOCTYPE html>
-<html lang="vi" data-theme="apple">
+<html lang="vi" data-theme="apple" data-m3-seed="baseline">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#F8F9FA" />
+  <meta name="theme-color" content="#FEF7FF" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="description" content="PaperInk — Trình đọc sách EPUB phong cách Google Material Design 3 &amp; Kindle E-Ink hỗ trợ kệ gỗ 3D, lật trang 3D, viết ghi chú S Pen và từ điển Anh–Việt offline." />
-  <meta property="og:title" content="PaperInk — Kệ sách 3D &amp; Trình đọc EPUB Material 3" />
+  <meta property="og:title" content="PaperInk — Material 3 EPUB &amp; E-Ink Reader" />
   <meta property="og:description" content="Đọc file EPUB êm mắt như Kindle E-Ink với giao diện Google Material Design 3, kệ gỗ 3D, viết tay S Pen và từ điển Anh–Việt." />
   <meta property="og:type" content="website" />
-  <title>PaperInk — Kệ sách &amp; Trình đọc E-Ink</title>
+  <title>PaperInk — Material 3 EPUB &amp; E-Ink Reader</title>
 
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" href="./icons/favicon.png" />
@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,500;0,700;1,500&family=Literata:ital,opsz,wght@0,7..72,350..650;1,7..72,400..600&family=Lora:ital,wght@0,400..700;1,400..600&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Plus+Jakarta+Sans:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Cormorant+Garamond:ital,wght@0,500;0,700;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500;600&family=Literata:ital,opsz,wght@0,7..72,350..650;1,7..72,400..600&family=Lora:ital,wght@0,400..700;1,400..600&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap"
     rel="stylesheet"
   />
   <link rel="stylesheet" href="./css/styles.css" />
@@ -57,6 +57,10 @@
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
           <div class="title-stack">
+            <div class="m3-top-app-badge" aria-hidden="true">
+              <span class="m3-badge-dot"></span>
+              <span>Material Design 3 · Material You</span>
+            </div>
             <div class="title-line">
               <h1 id="view-title" class="apple-page-title">Kệ sách</h1>
               <span id="connection-dot" class="conn-dot" title="Trạng thái kết nối PC" aria-label="Trạng thái kết nối"></span>
@@ -66,6 +70,22 @@
         </div>
 
         <div class="lib-utility-cluster">
+          <!-- M3 Dynamic Color Seed Palette Switcher -->
+          <div class="m3-seed-switcher" role="group" aria-label="Material You Dynamic Color Palette">
+            <button type="button" class="m3-seed-dot active" data-m3-seed-btn="baseline" title="Material Violet (#6750A4)" aria-label="Material Violet">
+              <span style="background: #6750A4;"></span>
+            </button>
+            <button type="button" class="m3-seed-dot" data-m3-seed-btn="blue" title="Google Blue (#0B57D0)" aria-label="Google Blue">
+              <span style="background: #0B57D0;"></span>
+            </button>
+            <button type="button" class="m3-seed-dot" data-m3-seed-btn="emerald" title="Forest Emerald (#146C2E)" aria-label="Forest Emerald">
+              <span style="background: #146C2E;"></span>
+            </button>
+            <button type="button" class="m3-seed-dot" data-m3-seed-btn="terracotta" title="Editorial Terracotta (#8F4C38)" aria-label="Editorial Terracotta">
+              <span style="background: #8F4C38;"></span>
+            </button>
+          </div>
+
           <button class="hdr-icon-btn glass-chrome" id="lib-dark-toggle" type="button" title="Bật chế độ Tối (Dark Mode)" aria-label="Chuyển đổi giao diện Sáng / Tối" aria-pressed="false">
             <svg id="dark-icon-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             <svg id="dark-icon-sun" class="hidden" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.95" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.7" y2="6.7"/><line x1="17.3" y1="17.3" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.7" y2="17.3"/><line x1="17.3" y1="6.7" x2="19.07" y2="4.93"/></svg>
@@ -80,22 +100,23 @@
         </div>
 
         <div class="lib-header-actions" id="lib-header-actions">
-          <button class="hdr-tool-pill hdr-search-pill glass-chrome" id="lib-search-toggle" type="button" title="Tìm kiếm" aria-label="Mở thanh tìm kiếm" aria-expanded="false">
+          <button class="hdr-tool-pill hdr-search-pill glass-chrome m3-docked-search" id="lib-search-toggle" type="button" title="Tìm kiếm (Ctrl+K)" aria-label="Mở thanh tìm kiếm" aria-expanded="false">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.05" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7.5"/><line x1="20.5" y1="20.5" x2="16.4" y2="16.4"/></svg>
             <span class="hdr-pill-label hdr-search-placeholder">Tìm sách, tác giả, #tag…</span>
+            <kbd class="m3-search-kbd" aria-hidden="true">⌘K</kbd>
           </button>
-          <button class="hdr-tool-pill hdr-update-pill glass-chrome" id="lib-update-btn" type="button" title="Tự động quét &amp; thêm các sách .EPUB mới trên máy (chỉ thêm sách/bộ chưa có, không thêm trùng)" aria-label="Cập nhật sách EPUB mới trên máy">
+          <button class="hdr-tool-pill hdr-update-pill glass-chrome m3-tonal-btn" id="lib-update-btn" type="button" title="Tự động quét &amp; thêm các sách .EPUB mới trên máy (chỉ thêm sách/bộ chưa có, không thêm trùng)" aria-label="Cập nhật sách EPUB mới trên máy">
             <svg class="update-spin-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
             <span class="hdr-pill-label" id="lib-update-label">Update</span>
           </button>
-          <button class="hdr-tool-pill glass-chrome" id="lib-import-btn" type="button" title="Thêm sách EPUB từ máy" aria-label="Thêm sách EPUB từ thiết bị">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            <span class="hdr-pill-label">Thêm sách</span>
-          </button>
-          <button class="hdr-tool-pill glass-chrome" id="lib-studio-btn" type="button" title="Tùy chỉnh kệ gỗ, sticker &amp; hình nền" aria-label="Tùy chỉnh kệ gỗ, sticker và hình nền">
+          <button class="hdr-tool-pill glass-chrome m3-outlined-btn" id="lib-studio-btn" type="button" title="Tùy chỉnh kệ gỗ, sticker &amp; hình nền" aria-label="Tùy chỉnh kệ gỗ, sticker và hình nền">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg>
             <span class="hdr-pill-label" id="lib-studio-label">Nền &amp; Kệ</span>
             <span id="studio-scope-dot" class="studio-scope-dot hidden" title="Kệ này đang có hình nền riêng"></span>
+          </button>
+          <button class="hdr-tool-pill glass-chrome m3-extended-fab" id="lib-import-btn" type="button" title="Thêm sách EPUB từ máy" aria-label="Thêm sách EPUB từ thiết bị">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="hdr-pill-label">Thêm sách</span>
           </button>
         </div>
       </div>
@@ -287,8 +308,23 @@
       </button>
     </div>
 
-    <!-- Google Material Design 3 Navigation Bar with Active Pill Indicator -->
-    <nav id="bottom-tabbar" class="bottom-tabbar" aria-label="Điều hướng chính">
+    <!-- Google Material Design 3 Adaptive Navigation Rail (Desktop >= 840px) & Navigation Bar (Mobile < 840px) -->
+    <nav id="bottom-tabbar" class="bottom-tabbar m3-navigation-bar" aria-label="Điều hướng chính">
+      <div class="m3-rail-header">
+        <div class="m3-rail-brand" title="PaperInk — Material Design 3 Reader" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+          </svg>
+        </div>
+        <button type="button" class="m3-rail-fab" id="rail-quick-import-btn" title="Thêm sách EPUB mới" aria-label="Thêm sách EPUB nhanh" onclick="document.getElementById('lib-import-btn')?.click()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+      </div>
+
       <button class="btab active" data-route="shelf" type="button" aria-current="page">
         <span class="btab-pill" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -762,6 +798,57 @@
       </button>
     </div>
     <div class="sheet-content">
+      <!-- 0. Material Design 3 (Material You) Dynamic Color Seed -->
+      <div class="inset-section">
+        <div class="inset-section-label">Bảng màu Material Design 3 (Dynamic Color)</div>
+        <div class="m3-studio-seed-grid" role="group" aria-label="Chọn bảng màu Material You">
+          <button type="button" class="m3-studio-seed-card active" data-m3-seed-btn="baseline">
+            <span class="m3-seed-swatch-group">
+              <span style="background:#6750A4"></span>
+              <span style="background:#EADDFF"></span>
+              <span style="background:#E8DEF8"></span>
+            </span>
+            <span class="m3-seed-card-meta">
+              <strong>Material Violet</strong>
+              <small>M3 Baseline · #6750A4</small>
+            </span>
+          </button>
+          <button type="button" class="m3-studio-seed-card" data-m3-seed-btn="blue">
+            <span class="m3-seed-swatch-group">
+              <span style="background:#0B57D0"></span>
+              <span style="background:#D3E3FD"></span>
+              <span style="background:#C2E7FF"></span>
+            </span>
+            <span class="m3-seed-card-meta">
+              <strong>Google Blue</strong>
+              <small>Play Books · #0B57D0</small>
+            </span>
+          </button>
+          <button type="button" class="m3-studio-seed-card" data-m3-seed-btn="emerald">
+            <span class="m3-seed-swatch-group">
+              <span style="background:#146C2E"></span>
+              <span style="background:#C4EED0"></span>
+              <span style="background:#C0EFCA"></span>
+            </span>
+            <span class="m3-seed-card-meta">
+              <strong>Forest Emerald</strong>
+              <small>Botanical · #146C2E</small>
+            </span>
+          </button>
+          <button type="button" class="m3-studio-seed-card" data-m3-seed-btn="terracotta">
+            <span class="m3-seed-swatch-group">
+              <span style="background:#8F4C38"></span>
+              <span style="background:#FFDBD1"></span>
+              <span style="background:#F5E1A7"></span>
+            </span>
+            <span class="m3-seed-card-meta">
+              <strong>Editorial Clay</strong>
+              <small>Warm Paper · #8F4C38</small>
+            </span>
+          </button>
+        </div>
+      </div>
+
       <!-- 1. Shelf Style -->
       <div class="inset-section">
         <div class="inset-section-label">Kiểu kệ &amp; Trưng bày</div>

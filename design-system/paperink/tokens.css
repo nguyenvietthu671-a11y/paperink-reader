@@ -1,41 +1,172 @@
-/* Design Tokens - Auto-generated */
-/* Do not edit directly - modify tokens.json instead */
+/**
+ * PaperInk — Google Material Design 3 (Material You) Design Tokens
+ * Specification: https://m3.material.io/develop
+ */
 
-/* === PRIMITIVES === */
-:root {
+:root,
+[data-m3-seed="baseline"] {
+  /* M3 Baseline Dynamic Color Seed: Material Violet (#6750A4) */
+  --md-sys-color-primary: #6750A4;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #EADDFF;
+  --md-sys-color-on-primary-container: #21005D;
+  --md-sys-color-secondary: #625B71;
+  --md-sys-color-on-secondary: #FFFFFF;
+  --md-sys-color-secondary-container: #E8DEF8;
+  --md-sys-color-on-secondary-container: #1D192B;
+  --md-sys-color-tertiary: #7D5260;
+  --md-sys-color-on-tertiary: #FFFFFF;
+  --md-sys-color-tertiary-container: #FFD8E4;
+  --md-sys-color-on-tertiary-container: #31111D;
+  --md-sys-color-error: #B3261E;
+  --md-sys-color-on-error: #FFFFFF;
+  --md-sys-color-error-container: #F9DEDC;
+  --md-sys-color-on-error-container: #410E0B;
 
+  /* M3 Tonal Surface Container Hierarchy (Light) */
+  --md-sys-color-background: #FEF7FF;
+  --md-sys-color-on-background: #1D1B20;
+  --md-sys-color-surface: #FEF7FF;
+  --md-sys-color-surface-dim: #DED8E1;
+  --md-sys-color-surface-bright: #FEF7FF;
+  --md-sys-color-surface-container-lowest: #FFFFFF;
+  --md-sys-color-surface-container-low: #F7F2FA;
+  --md-sys-color-surface-container: #F3EDF7;
+  --md-sys-color-surface-container-high: #ECE6F0;
+  --md-sys-color-surface-container-highest: #E6E0E9;
+  --md-sys-color-on-surface: #1D1B20;
+  --md-sys-color-surface-variant: #E7E0EC;
+  --md-sys-color-on-surface-variant: #49454F;
+  --md-sys-color-outline: #79747E;
+  --md-sys-color-outline-variant: #CAC4D0;
+  --md-sys-color-inverse-surface: #322F35;
+  --md-sys-color-inverse-on-surface: #F5EFF7;
+  --md-sys-color-inverse-primary: #D0BCFF;
+  --md-sys-color-scrim: #000000;
+
+  /* M3 Shape Scale */
+  --md-sys-shape-corner-none: 0px;
+  --md-sys-shape-corner-extra-small: 4px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-full: 9999px;
+
+  /* M3 Elevation Levels */
+  --md-sys-elevation-level0: none;
+  --md-sys-elevation-level1: 0 1px 2px rgba(0, 0, 0, 0.14), 0 1px 3px 1px rgba(103, 80, 164, 0.08);
+  --md-sys-elevation-level2: 0 1px 2px rgba(0, 0, 0, 0.16), 0 2px 6px 2px rgba(103, 80, 164, 0.10);
+  --md-sys-elevation-level3: 0 4px 8px 3px rgba(103, 80, 164, 0.12), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --md-sys-elevation-level4: 0 6px 10px 4px rgba(103, 80, 164, 0.14), 0 2px 3px rgba(0, 0, 0, 0.20);
+  --md-sys-elevation-level5: 0 8px 12px 6px rgba(103, 80, 164, 0.16), 0 4px 4px rgba(0, 0, 0, 0.22);
+
+  /* M3 Motion Easing & Duration */
+  --md-sys-motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-sys-motion-easing-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-duration-short2: 100ms;
+  --md-sys-motion-duration-short4: 200ms;
+  --md-sys-motion-duration-medium2: 300ms;
+  --md-sys-motion-duration-long2: 500ms;
+
+  /* M3 State Layer Opacities */
+  --md-sys-state-hover-opacity: 0.08;
+  --md-sys-state-focus-opacity: 0.12;
+  --md-sys-state-pressed-opacity: 0.12;
+  --md-sys-state-dragged-opacity: 0.16;
+
+  /* M3 Typography Scale */
+  --md-sys-typescale-brand-font: 'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif;
+  --md-sys-typescale-plain-font: 'DM Sans', 'Plus Jakarta Sans', system-ui, sans-serif;
+  --md-sys-typescale-reading-font: 'Literata', 'Newsreader', Georgia, serif;
+  --md-sys-typescale-mono-font: 'JetBrains Mono', monospace;
 }
 
-/* === SEMANTIC === */
-:root {
-  --color-primary: #78716C;
-  --color-on-primary: #FFFFFF;
-  --color-secondary: #92400E;
-  --color-on-secondary: #FFFFFF;
-  --color-accent: #D97706;
-  --color-on-accent: #000000;
-  --color-background: #FFFBEB;
-  --color-foreground: #0F172A;
-  --color-card: #FFFFFF;
-  --color-card-foreground: #0F172A;
-  --color-muted: #F6F6F6;
-  --color-muted-foreground: #475569;
-  --color-border: #EEEDED;
-  --color-destructive: #DC2626;
-  --color-on-destructive: #FFFFFF;
-  --color-ring: #78716C;
-  --font-heading: "Cormorant Garamond", serif;
-  --font-body: "Crimson Pro", serif;
-  --space-xs: 4px;
-  --space-sm: 8px;
-  --space-md: 16px;
-  --space-lg: 24px;
-  --space-xl: 32px;
-  --space-2xl: 48px;
-  --space-3xl: 64px;
+/* M3 Seed: Google Blue (#0B57D0) */
+[data-m3-seed="blue"] {
+  --md-sys-color-primary: #0B57D0;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #D3E3FD;
+  --md-sys-color-on-primary-container: #041E49;
+  --md-sys-color-secondary: #00639B;
+  --md-sys-color-on-secondary: #FFFFFF;
+  --md-sys-color-secondary-container: #C2E7FF;
+  --md-sys-color-on-secondary-container: #001D35;
+  --md-sys-color-tertiary: #146C2E;
+  --md-sys-color-on-tertiary: #FFFFFF;
+  --md-sys-color-tertiary-container: #C4EED0;
+  --md-sys-color-on-tertiary-container: #072711;
+  --md-sys-color-background: #F8FAFD;
+  --md-sys-color-surface: #F8FAFD;
+  --md-sys-color-surface-dim: #D3DBE5;
+  --md-sys-color-surface-bright: #F8FAFD;
+  --md-sys-color-surface-container-lowest: #FFFFFF;
+  --md-sys-color-surface-container-low: #F3F6FC;
+  --md-sys-color-surface-container: #EDF2FA;
+  --md-sys-color-surface-container-high: #E4ECF7;
+  --md-sys-color-surface-container-highest: #DCE5F2;
+  --md-sys-color-on-surface: #1F1F1F;
+  --md-sys-color-on-surface-variant: #444746;
+  --md-sys-color-outline: #747775;
+  --md-sys-color-outline-variant: #C4C7C5;
 }
 
-/* === COMPONENTS === */
-:root {
+/* M3 Seed: Forest Emerald (#146C2E) */
+[data-m3-seed="emerald"] {
+  --md-sys-color-primary: #146C2E;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #C4EED0;
+  --md-sys-color-on-primary-container: #072711;
+  --md-sys-color-secondary: #3F6848;
+  --md-sys-color-on-secondary: #FFFFFF;
+  --md-sys-color-secondary-container: #C0EFCA;
+  --md-sys-color-on-secondary-container: #00210B;
+  --md-sys-color-tertiary: #236488;
+  --md-sys-color-on-tertiary: #FFFFFF;
+  --md-sys-color-tertiary-container: #C8E6FF;
+  --md-sys-color-on-tertiary-container: #001E2E;
+  --md-sys-color-background: #F6FBF5;
+  --md-sys-color-surface: #F6FBF5;
+  --md-sys-color-surface-dim: #D7DDD6;
+  --md-sys-color-surface-bright: #F6FBF5;
+  --md-sys-color-surface-container-lowest: #FFFFFF;
+  --md-sys-color-surface-container-low: #F0F5EF;
+  --md-sys-color-surface-container: #EAEFE9;
+  --md-sys-color-surface-container-high: #E5EAE4;
+  --md-sys-color-surface-container-highest: #DFE4DE;
+  --md-sys-color-on-surface: #181D19;
+  --md-sys-color-on-surface-variant: #414942;
+  --md-sys-color-outline: #717971;
+  --md-sys-color-outline-variant: #C1C9BF;
+}
 
+/* M3 Seed: Editorial Terracotta (#8F4C38) */
+[data-m3-seed="terracotta"] {
+  --md-sys-color-primary: #8F4C38;
+  --md-sys-color-on-primary: #FFFFFF;
+  --md-sys-color-primary-container: #FFDBD1;
+  --md-sys-color-on-primary-container: #3A0B01;
+  --md-sys-color-secondary: #77574E;
+  --md-sys-color-on-secondary: #FFFFFF;
+  --md-sys-color-secondary-container: #FFDBD1;
+  --md-sys-color-on-secondary-container: #2C150F;
+  --md-sys-color-tertiary: #6C5D2F;
+  --md-sys-color-on-tertiary: #FFFFFF;
+  --md-sys-color-tertiary-container: #F5E1A7;
+  --md-sys-color-on-tertiary-container: #231B00;
+  --md-sys-color-background: #FFF8F6;
+  --md-sys-color-surface: #FFF8F6;
+  --md-sys-color-surface-dim: #E8D6D2;
+  --md-sys-color-surface-bright: #FFF8F6;
+  --md-sys-color-surface-container-lowest: #FFFFFF;
+  --md-sys-color-surface-container-low: #FFF1ED;
+  --md-sys-color-surface-container: #FCEAE5;
+  --md-sys-color-surface-container-high: #F7E4E0;
+  --md-sys-color-surface-container-highest: #F1DFDA;
+  --md-sys-color-on-surface: #231917;
+  --md-sys-color-on-surface-variant: #53433F;
+  --md-sys-color-outline: #85736E;
+  --md-sys-color-outline-variant: #D8C2BC;
 }

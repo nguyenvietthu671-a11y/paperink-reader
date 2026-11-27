@@ -2157,8 +2157,9 @@
         if (metaTheme) metaTheme.setAttribute('content', preset?.metaColor || '#18181b');
       } else {
         const savedHex = cfg.bgColor || '#F8F9FA';
+        const isDefaultSurfaceHex = !resolved.isScoped && (savedHex.toUpperCase() === '#F8F9FA' || savedHex.toUpperCase() === '#FEF7FF');
         const savedIsDark = hexLuminance(savedHex) < 0.28;
-        let effectiveHex = savedHex;
+        let effectiveHex = isDefaultSurfaceHex ? 'var(--md-surface)' : savedHex;
         let colorDim = 0;
         if (darkActive && !savedIsDark) {
           if (resolved.isScoped) {
@@ -2166,7 +2167,7 @@
             effectiveHex = savedHex;
             colorDim = 0.58;
           } else {
-            effectiveHex = themeName === 'amoled' ? '#000000' : '#131314';
+            effectiveHex = themeName === 'amoled' ? '#000000' : 'var(--md-surface)';
           }
         }
         wpEl.style.backgroundImage = 'none';
@@ -2174,16 +2175,52 @@
         wpEl.style.filter = '';
         wpEl.style.transform = '';
         scrimEl.style.opacity = String(colorDim);
-        const isDark = darkActive || hexLuminance(effectiveHex) < 0.28 || colorDim >= 0.35;
+        const isDark = darkActive || (!isDefaultSurfaceHex && hexLuminance(savedHex) < 0.28) || colorDim >= 0.35;
         libView.classList.toggle('wp-dark', isDark);
         ambEl.style.opacity = cfg.bgAmbient !== false ? '1' : '0';
         const metaTheme = document.querySelector('meta[name="theme-color"]');
-        if (metaTheme) metaTheme.setAttribute('content', effectiveHex);
+        if (metaTheme) metaTheme.setAttribute('content', isDefaultSurfaceHex ? '#FEF7FF' : savedHex);
+      }
+    }
+
+    applyM3Seed(seedName, persist = true) {
+      const validSeeds = ['baseline', 'blue', 'emerald', 'terracotta'];
+      const seed = validSeeds.includes(seedName) ? seedName : 'baseline';
+      document.documentElement.setAttribute('data-m3-seed', seed);
+      if (this.state && this.state.settings) {
+        this.state.settings.m3Seed = seed;
+      }
+      document.querySelectorAll('[data-m3-seed-btn]').forEach((btn) => {
+        btn.classList.toggle('active', btn.getAttribute('data-m3-seed-btn') === seed);
+      });
+      if (persist) {
+        try {
+          localStorage.setItem('paperink_m3_seed', seed);
+          if (typeof this.saveSettings === 'function') this.saveSettings();
+        } catch (_e) {}
+      }
+      if (typeof this.applyBackgroundToDOM === 'function') {
+        this.applyBackgroundToDOM();
       }
     }
 
     syncSettingsControls() {
       const s = this.state.settings;
+      if (!this._m3SeedInitialized) {
+        this._m3SeedInitialized = true;
+        let savedSeed = s.m3Seed || 'baseline';
+        try {
+          savedSeed = localStorage.getItem('paperink_m3_seed') || savedSeed;
+        } catch (_e) {}
+        this.applyM3Seed(savedSeed, false);
+        document.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-m3-seed-btn]');
+          if (btn) {
+            const nextSeed = btn.getAttribute('data-m3-seed-btn');
+            this.applyM3Seed(nextSeed, true);
+          }
+        });
+      }
       const darkActive = isDarkThemeName(s.theme);
       document.querySelectorAll('.theme-swatch').forEach((el) => {
         el.classList.toggle('active', el.dataset.theme === s.theme);
