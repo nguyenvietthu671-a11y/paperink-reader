@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'paperink-shell-v32';
+const SHELL_CACHE = 'paperink-shell-v33';
 const RUNTIME_CACHE = 'paperink-runtime-v1';
 
 const SHELL_ASSETS = [

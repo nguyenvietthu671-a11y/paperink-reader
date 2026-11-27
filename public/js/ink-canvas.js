@@ -869,6 +869,28 @@
       ctx.restore();
     }
 
+    renderDetachedInkCanvas(strokes, width, height) {
+      if (!Array.isArray(strokes) || strokes.length === 0) return null;
+      const w = Math.max(1, Math.floor(width || this.cssW || 360));
+      const h = Math.max(1, Math.floor(height || this.cssH || 640));
+      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      const cv = document.createElement('canvas');
+      cv.className = 'turn-page-ink-layer';
+      cv.width = Math.floor(w * dpr);
+      cv.height = Math.floor(h * dpr);
+      cv.style.width = `${w}px`;
+      cv.style.height = `${h}px`;
+      const ctx = cv.getContext('2d');
+      if (!ctx) return null;
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (const stroke of strokes) {
+        this.drawStroke(ctx, stroke, w, h);
+      }
+      ctx.restore();
+      return cv;
+    }
+
     drawStroke(ctx, stroke, W, H) {
       const pts = stroke.points;
       if (!pts || pts.length === 0) return;

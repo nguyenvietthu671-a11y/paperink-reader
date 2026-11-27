@@ -316,6 +316,17 @@
           }
         },
         onPageChanged: ({ bookId, pageKey, meta }) => this.loadInkForPage(bookId, pageKey, meta),
+        renderPageInkLayer: ({ bookId, pageKey, width, height }) => {
+          if (!bookId || !pageKey || !this.inkCanvas) return null;
+          let strokes = null;
+          if (this.inkCanvas.bookId === bookId && this.inkCanvas.pageKey === pageKey) {
+            strokes = this.inkCanvas.strokes;
+          } else {
+            strokes = this.state.inkNotes?.[bookId]?.[pageKey]?.strokes;
+          }
+          if (!Array.isArray(strokes) || strokes.length === 0) return null;
+          return this.inkCanvas.renderDetachedInkCanvas(strokes, width, height);
+        },
         onBookClosed: () => {
           this.inkCanvas.clearContext();
           this.flushSyncNow(true);

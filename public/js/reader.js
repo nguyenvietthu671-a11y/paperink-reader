@@ -1441,6 +1441,7 @@
 
       if (effect === 'slide') {
         this.contentEl.classList.add('no-turn-anim');
+        this.setupSlideInkTrack(this.turnSession);
         return;
       }
 
@@ -1451,7 +1452,19 @@
         const maskW = Math.max(1, this.maskEl.clientWidth || maskRect.width);
         const maskH = Math.max(1, this.maskEl.clientHeight || maskRect.height);
 
+        const buildPageInkNode = (pageIdx) => {
+          if (pageIdx === null || !this.bookMeta?.id || !this.cb.renderPageInkLayer) return null;
+          const pageKey = `ch${this.chapterIndex}_p${pageIdx}`;
+          return this.cb.renderPageInkLayer({
+            bookId: this.bookMeta.id,
+            pageKey,
+            width: stageW,
+            height: stageH,
+          });
+        };
+
         const buildPageMask = (pageIdx, boundaryText = '') => {
+          const frag = document.createDocumentFragment();
           const innerMask = document.createElement('div');
           innerMask.className = 'curl-page-mask';
           innerMask.style.left = `${padLeft}px`;
@@ -1474,19 +1487,27 @@
             note.textContent = boundaryText;
             innerMask.appendChild(note);
           }
-          return innerMask;
+          frag.appendChild(innerMask);
+
+          const inkLayer = buildPageInkNode(pageIdx);
+          if (inkLayer) {
+            frag.appendChild(inkLayer);
+          }
+          return frag;
         };
 
         this.curlStage.classList.remove('dir-next', 'dir-prev', 'chapter-boundary');
         this.curlStage.classList.add(dir === 'next' ? 'dir-next' : 'dir-prev');
 
         let turningPageIdx = null;
+        let underPageIdx = null;
         let boundaryLabel = '';
 
         if (dir === 'next') {
           // Right -> Left: Top sheet holds CURRENT page peeling away; underneath reveals NEXT page
           turningPageIdx = this.currentPage;
           if (canStepInChapter) {
+            underPageIdx = targetPage;
             this.contentEl.classList.add('no-turn-anim');
             this.contentEl.style.transform = `translate3d(${-targetPage * stride}px, 0, 0)`;
             if (this.curlUnderVeil) this.curlUnderVeil.innerHTML = '';
@@ -1500,6 +1521,7 @@
           }
         } else {
           // Left -> Right: Underneath keeps CURRENT page; top sheet unfolds PREVIOUS page from left spine
+          underPageIdx = this.currentPage;
           if (this.curlUnderVeil) this.curlUnderVeil.innerHTML = '';
           if (canStepInChapter) {
             turningPageIdx = targetPage;
@@ -1508,7 +1530,19 @@
           }
         }
 
-        // Front side of turning sheet
+        // Hide live static #ink-canvas while curl-stage composites both turning & underlying page ink layers!
+        this.stageEl.classList.add('page-turning-active');
+
+        // Render underlying page's ink note beneath curl-under-veil so it stays locked to the bottom page
+        this.cleanupUnderInkNode();
+        const underInkNode = buildPageInkNode(underPageIdx);
+        if (underInkNode) {
+          underInkNode.classList.add('curl-under-ink-layer');
+          this.curlStage.insertBefore(underInkNode, this.curlUnderVeil);
+          this._curlUnderInkNode = underInkNode;
+        }
+
+        // Front side of turning sheet (includes text + turning page's ink note!)
         this.curlTopSheet.innerHTML = '';
         this.curlTopSheet.appendChild(buildPageMask(turningPageIdx, boundaryLabel));
 
@@ -1522,7 +1556,7 @@
         applyTallBox(this.curlUnderShadow);
         applyTallBox(this.curlCreaseShade);
 
-        // Mirrored ghost text on the reverse side of the 3D curled paper cylinder
+        // Mirrored ghost text + ink on the reverse side of the 3D curled paper cylinder
         if (this.curlFlapMirror) {
           this.curlFlapMirror.innerHTML = '';
           this.curlFlapMirror.style.top = `${extraTop}px`;
@@ -1537,6 +1571,57 @@
         this.curlStage.classList.remove('hidden');
         this.updateCurlProgress(0, this.turnSession.yRatio);
       }
+    }
+
+    cleanupUnderInkNode() {
+      if (this._curlUnderInkNode) {
+        this._curlUnderInkNode.remove();
+        this._curlUnderInkNode = null;
+      }
+    }
+
+    setupSlideInkTrack(s) {
+      this.cleanupSlideInkTrack();
+      if (!s || !this.stageEl || !this.bookMeta?.id || !this.cb.renderPageInkLayer) return;
+
+      const track = document.createElement('div');
+      track.className = 'slide-ink-track no-turn-anim';
+      const pagesToRender = [s.origPage];
+      if (s.canStepInChapter && s.targetPage !== null) {
+        pagesToRender.push(s.targetPage);
+      }
+
+      let hasAnyInk = false;
+      for (const pIdx of pagesToRender) {
+        const pageKey = `ch${this.chapterIndex}_p${pIdx}`;
+        const cv = this.cb.renderPageInkLayer({
+          bookId: this.bookMeta.id,
+          pageKey,
+          width: s.stageW,
+          height: s.stageH,
+        });
+        if (cv) {
+          hasAnyInk = true;
+          cv.style.transform = `translate3d(${pIdx * s.stride}px, 0, 0)`;
+          track.appendChild(cv);
+        }
+      }
+
+      this.stageEl.classList.add('page-turning-active');
+      if (hasAnyInk) {
+        track.style.transform = `translate3d(${-s.origPage * s.stride}px, 0, 0)`;
+        this.stageEl.appendChild(track);
+        this._slideInkTrack = track;
+      }
+    }
+
+    cleanupSlideInkTrack() {
+      clearTimeout(this._slideInkCleanupTimer);
+      if (this._slideInkTrack) {
+        this._slideInkTrack.remove();
+        this._slideInkTrack = null;
+      }
+      this.stageEl?.classList.remove('page-turning-active');
     }
 
     updateCurlProgress(rawProgress, nextYRatio = null) {
@@ -1680,7 +1765,11 @@
       if (!s || s.effect !== 'slide') return;
       const base = -s.origPage * s.stride;
       const dampedDx = s.canStepInChapter ? dx : dx * 0.32;
-      this.contentEl.style.transform = `translate3d(${(base + dampedDx).toFixed(1)}px, 0, 0)`;
+      const tx = `translate3d(${(base + dampedDx).toFixed(1)}px, 0, 0)`;
+      this.contentEl.style.transform = tx;
+      if (this._slideInkTrack) {
+        this._slideInkTrack.style.transform = tx;
+      }
       s.progress = Math.max(0, Math.min(1, (s.dir === 'next' ? -dx : dx) / s.stageW));
     }
 
@@ -1695,24 +1784,32 @@
 
       if (s.effect === 'slide') {
         this.contentEl.classList.remove('no-turn-anim');
+        this._slideInkTrack?.classList.remove('no-turn-anim');
         void this.contentEl.offsetWidth;
         if (commit && s.canStepInChapter) {
           this.currentPage = s.targetPage;
-          this.contentEl.style.transform = `translate3d(${-this.currentPage * s.stride}px, 0, 0)`;
+          const tx = `translate3d(${-this.currentPage * s.stride}px, 0, 0)`;
+          this.contentEl.style.transform = tx;
+          if (this._slideInkTrack) this._slideInkTrack.style.transform = tx;
           this.turnSession = null;
           this.updateProgressUI();
           this.notifyPageChanged();
           this.persistProgress();
           this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
+          this._slideInkCleanupTimer = setTimeout(() => this.cleanupSlideInkTrack(), 330);
         } else if (commit && s.hasNeighborChapter) {
           this.turnSession = null;
+          this.cleanupSlideInkTrack();
           if (s.dir === 'next') this.goToChapter(this.chapterIndex + 1, 0, '', 'next');
           else this.goToChapter(this.chapterIndex - 1, 'last', '', 'prev');
           this.cb.onReadingActivity?.({ minutesDelta: 0, pagesDelta: 1 });
         } else {
           // Spring back smoothly to original page
-          this.contentEl.style.transform = `translate3d(${-s.origPage * s.stride}px, 0, 0)`;
+          const tx = `translate3d(${-s.origPage * s.stride}px, 0, 0)`;
+          this.contentEl.style.transform = tx;
+          if (this._slideInkTrack) this._slideInkTrack.style.transform = tx;
           this.turnSession = null;
+          this._slideInkCleanupTimer = setTimeout(() => this.cleanupSlideInkTrack(), 330);
         }
         return;
       }
@@ -1789,6 +1886,9 @@
     }
 
     cleanupCurlDOM() {
+      this.cleanupUnderInkNode();
+      this.cleanupSlideInkTrack();
+      this.stageEl?.classList.remove('page-turning-active');
       if (this.curlStage) {
         this.curlStage.classList.add('hidden');
         this.curlStage.classList.remove('chapter-boundary', 'dir-next', 'dir-prev');
@@ -1829,6 +1929,7 @@
       if (this.turnSession.effect === 'curl') {
         this.finalizeCurlSession(Boolean(this.turnSession.pendingCommit));
       } else {
+        this.cleanupSlideInkTrack();
         this.turnSession = null;
       }
     }
@@ -1865,9 +1966,33 @@
     goToPage(pageIdx, withEffect = true, turnDir = 'next') {
       if (!this.epub || this.isScrollMode()) return;
       if (this.contentZoom !== 1) this.resetContentZoom(false);
+      const prevPage = this.currentPage;
       const clamped = Math.max(0, Math.min(this.totalPages - 1, pageIdx));
-      this.currentPage = clamped;
       const stride = this.pageW + this.pageGap;
+      const eff = this.getTurnEffect();
+
+      // When using Slide turn effect on tap/button navigation, slide both page content and ink note together!
+      if (withEffect && eff === 'slide' && prevPage !== clamped && this.stageEl) {
+        const stageRect = this.stageEl.getBoundingClientRect();
+        const stageW = Math.max(1, this.stageEl.clientWidth || stageRect.width);
+        const stageH = Math.max(1, this.stageEl.clientHeight || stageRect.height);
+        this.setupSlideInkTrack({
+          origPage: prevPage,
+          targetPage: clamped,
+          canStepInChapter: true,
+          stride,
+          stageW,
+          stageH,
+        });
+        this._slideInkTrack?.classList.remove('no-turn-anim');
+        void this._slideInkTrack?.offsetWidth;
+        if (this._slideInkTrack) {
+          this._slideInkTrack.style.transform = `translate3d(${-clamped * stride}px, 0, 0)`;
+        }
+        this._slideInkCleanupTimer = setTimeout(() => this.cleanupSlideInkTrack(), 330);
+      }
+
+      this.currentPage = clamped;
       this.contentEl.style.transform = `translate3d(${-this.currentPage * stride}px, 0, 0)`;
       if (withEffect) this.triggerTurnEffect(turnDir);
       this.updateProgressUI();
