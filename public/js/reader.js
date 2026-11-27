@@ -130,9 +130,20 @@
 
       // DOM elements
       this.viewEl = document.getElementById('reader-view');
+      this.zoomViewportEl = document.getElementById('reader-zoom-viewport');
+      this.zoomBadgeEl = document.getElementById('reader-zoom-badge');
+      this.zoomPctEl = document.getElementById('reader-zoom-pct');
       this.stageEl = document.getElementById('reader-stage');
       this.maskEl = document.getElementById('page-mask');
       this.contentEl = document.getElementById('chapter-content');
+
+      // Content-Only Zoom & Pan state (Toolbars remain 100% unscaled!)
+      this.contentZoom = 1;
+      this.contentPanX = 0;
+      this.contentPanY = 0;
+      this._lastAutoLookupSig = '';
+      this._singleWordSettleTimer = null;
+      this._selectPointerDown = false;
       this.flashEl = document.getElementById('eink-flash');
       this.curlEl = document.getElementById('page-curl-overlay');
       this.curlStage = document.getElementById('curl-stage');
@@ -227,21 +238,203 @@
       return s.turnEffect || (s.pageMode === 'instant' ? 'instant' : 'curl');
     }
 
+    // ==================== CONTENT-ONLY PINCH-ZOOM & PAN (TOOLBARS NEVER ZOOM) ====================
+    applyContentZoomTransform(animate = false) {
+      if (!this.stageEl) return;
+      const vp = this.zoomViewportEl || this.stageEl.parentElement;
+      const baseW = Math.max(1, this.stageEl.offsetWidth || vp?.clientWidth || 360);
+      const baseH = Math.max(1, this.stageEl.offsetHeight || vp?.clientHeight || 640);
+
+      if (this.contentZoom >= 1) {
+        const minX = Math.min(0, baseW * (1 - this.contentZoom));
+        const minY = Math.min(0, baseH * (1 - this.contentZoom));
+        this.contentPanX = Math.max(minX, Math.min(0, this.contentPanX));
+        this.contentPanY = Math.max(minY, Math.min(0, this.contentPanY));
+      } else {
+        // Gentle centered rubber-band when pinching slightly below 1.0x
+        this.contentPanX = (baseW * (1 - this.contentZoom)) * 0.5;
+        this.contentPanY = (baseH * (1 - this.contentZoom)) * 0.5;
+      }
+
+      const isZoomed = this.contentZoom > 1.01;
+      this.stageEl.classList.toggle('zoom-animating', Boolean(animate));
+      this.stageEl.classList.toggle('is-zoomed', isZoomed);
+
+      if (Math.abs(this.contentZoom - 1) < 0.005 && Math.abs(this.contentPanX) < 0.5 && Math.abs(this.contentPanY) < 0.5) {
+        this.contentZoom = 1;
+        this.contentPanX = 0;
+        this.contentPanY = 0;
+        this.stageEl.style.transform = '';
+      } else {
+        this.stageEl.style.transform = `translate3d(${this.contentPanX.toFixed(1)}px, ${this.contentPanY.toFixed(
+          1
+        )}px, 0) scale(${this.contentZoom.toFixed(4)})`;
+      }
+
+      if (this.zoomBadgeEl) {
+        this.zoomBadgeEl.classList.toggle('hidden', !isZoomed);
+        if (isZoomed && this.zoomPctEl) {
+          this.zoomPctEl.textContent = `${Math.round(this.contentZoom * 100)}%`;
+        }
+      }
+    }
+
+    zoomContentAroundClientPoint(
+      nextZoom,
+      focalClientX,
+      focalClientY,
+      prevFocalClientX = focalClientX,
+      prevFocalClientY = focalClientY,
+      allowRubberBand = false
+    ) {
+      const vp = this.zoomViewportEl || this.stageEl;
+      if (!vp || !this.stageEl) return;
+      const vpRect = vp.getBoundingClientRect();
+      if (vpRect.width <= 0 || vpRect.height <= 0) return;
+      const vpScaleX = vpRect.width / Math.max(1, vp.clientWidth || vpRect.width);
+      const vpScaleY = vpRect.height / Math.max(1, vp.clientHeight || vpRect.height);
+
+      const stageOffsetX = this.stageEl.offsetLeft || 0;
+      const stageOffsetY = this.stageEl.offsetTop || 0;
+
+      const fx0 = (prevFocalClientX - vpRect.left) / Math.max(0.2, vpScaleX) - stageOffsetX;
+      const fy0 = (prevFocalClientY - vpRect.top) / Math.max(0.2, vpScaleY) - stageOffsetY;
+      const fx1 = (focalClientX - vpRect.left) / Math.max(0.2, vpScaleX) - stageOffsetX;
+      const fy1 = (focalClientY - vpRect.top) / Math.max(0.2, vpScaleY) - stageOffsetY;
+
+      const ux = (fx0 - this.contentPanX) / Math.max(0.2, this.contentZoom);
+      const uy = (fy0 - this.contentPanY) / Math.max(0.2, this.contentZoom);
+
+      const z = allowRubberBand
+        ? Math.max(0.9, Math.min(3.2, nextZoom))
+        : Math.max(1, Math.min(3.2, nextZoom));
+
+      this.contentZoom = z;
+      this.contentPanX = fx1 - ux * z;
+      this.contentPanY = fy1 - uy * z;
+      this.applyContentZoomTransform(false);
+    }
+
+    resetContentZoom(animate = true) {
+      this.contentZoom = 1;
+      this.contentPanX = 0;
+      this.contentPanY = 0;
+      this.applyContentZoomTransform(animate);
+    }
+
+    caretPosFromClient(clientX, clientY) {
+      try {
+        if (document.caretRangeFromPoint) {
+          const r = document.caretRangeFromPoint(clientX, clientY);
+          if (r && r.startContainer && this.contentEl.contains(r.startContainer)) {
+            return { node: r.startContainer, offset: r.startOffset };
+          }
+        } else if (document.caretPositionFromPoint) {
+          const p = document.caretPositionFromPoint(clientX, clientY);
+          if (p && p.offsetNode && this.contentEl.contains(p.offsetNode)) {
+            return { node: p.offsetNode, offset: p.offset };
+          }
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    snapSelectionToSingleWordIfPartial() {
+      try {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+        const r = sel.getRangeAt(0);
+        if (r.startContainer !== r.endContainer || r.startContainer.nodeType !== Node.TEXT_NODE) return;
+        const txt = r.startContainer.nodeValue || '';
+        const slice = txt.slice(r.startOffset, r.endOffset);
+        if (!slice || /\s/.test(slice)) return;
+        const isWordChar = (ch) => /[\p{L}\p{M}'’-]/u.test(ch);
+        let s = r.startOffset;
+        let e = r.endOffset;
+        while (s > 0 && isWordChar(txt[s - 1])) s--;
+        while (e < txt.length && isWordChar(txt[e])) e++;
+        if (e > s && (s !== r.startOffset || e !== r.endOffset)) {
+          const expanded = document.createRange();
+          expanded.setStart(r.startContainer, s);
+          expanded.setEnd(r.startContainer, e);
+          sel.removeAllRanges();
+          sel.addRange(expanded);
+        }
+      } catch (_) {}
+    }
+
     bindEvents() {
-      // Interactive Finger-Tracking Gesture Engine (1:1 Apple Curl & Slide + Multi-Layer S Pen Palm Rejection)
+      // Interactive Finger-Tracking Gesture Engine (1:1 Apple Curl & Slide + Content Pinch-Zoom + S Pen Palm Rejection)
       let startX = 0;
       let startY = 0;
       let lastX = 0;
+      let lastY = 0;
       let lastMoveTime = 0;
       let velocityX = 0;
       let startTime = 0;
       let pointerActive = false;
-      let gestureMode = 'undecided'; // 'undecided' | 'horizontal' | 'vertical'
+      let gestureMode = 'undecided'; // 'undecided' | 'horizontal' | 'vertical' | 'zoom-pan'
       let dragDir = null;
       let lastPalmPointerAt = 0;
       let lastNativeTouchAt = 0;
       let lastTouchEnd = 0;
+      let lastPinchEndAt = 0;
       let touchPtrId = null;
+      let pinchSession = null;
+
+      // Prevent browser UI/toolbar zoom anywhere inside reader-view; route pinch straight to book content!
+      this.zoomBadgeEl?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.resetContentZoom(true);
+      });
+
+      this.viewEl?.addEventListener(
+        'gesturestart',
+        (e) => {
+          e.preventDefault();
+        },
+        { passive: false }
+      );
+      this.viewEl?.addEventListener(
+        'gesturechange',
+        (e) => {
+          e.preventDefault();
+        },
+        { passive: false }
+      );
+      this.viewEl?.addEventListener(
+        'touchmove',
+        (e) => {
+          // Block browser pinch-zoom on HUD / Pen Toolbar / Quick Pill so toolbars NEVER zoom!
+          if (e.touches.length >= 2 && e.cancelable) {
+            e.preventDefault();
+          }
+        },
+        { passive: false }
+      );
+
+      // Trackpad Pinch-Zoom (Ctrl + Wheel) & 2-Finger Pan when zoomed
+      this.viewEl?.addEventListener(
+        'wheel',
+        (e) => {
+          if (!this.epub || this.viewEl.classList.contains('hidden')) return;
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            if (e.target.closest('#pen-toolbar, #pen-detail-panel, #reader-hud-top, #reader-hud-bottom')) return;
+            const factor = Math.exp(-e.deltaY * 0.0085);
+            const nextZ = Math.max(1, Math.min(3.2, this.contentZoom * factor));
+            this.zoomContentAroundClientPoint(nextZ, e.clientX, e.clientY);
+            return;
+          }
+          if (this.contentZoom > 1.01 && !e.target.closest('#pen-detail-panel')) {
+            e.preventDefault();
+            this.contentPanX -= e.deltaX;
+            this.contentPanY -= e.deltaY;
+            this.applyContentZoomTransform(false);
+          }
+        },
+        { passive: false }
+      );
 
       this._abortActiveTouch = () => {
         if (pointerActive || this.turnSession) {
@@ -278,24 +471,21 @@
           this.forceCompleteTurnSession();
         }
         pointerActive = true;
-        gestureMode = 'undecided';
+        gestureMode = this.contentZoom > 1.02 ? 'zoom-pan' : 'undecided';
         dragDir = null;
         startX = lastX = clientX;
-        startY = clientY;
+        startY = lastY = clientY;
         startTime = lastMoveTime = Date.now();
         velocityX = 0;
       };
 
       const moveFingerGesture = (clientX, clientY, rawEvent) => {
         if (!pointerActive) return;
-        if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350) {
+        if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350 || pinchSession) {
           this._abortActiveTouch();
           return;
         }
-        if (this.isScrollMode() || !this.epub) return;
-
-        const dx = clientX - startX;
-        const dy = clientY - startY;
+        if (!this.epub) return;
 
         // Respect active text selection (long press)
         const selStr = window.getSelection()?.toString();
@@ -304,6 +494,26 @@
           this.cancelTurnSessionImmediate();
           return;
         }
+
+        // When zoomed into book content (> 102%), 1-finger drag pans smoothly across the zoomed page!
+        if (this.contentZoom > 1.02 || gestureMode === 'zoom-pan') {
+          gestureMode = 'zoom-pan';
+          if (rawEvent?.cancelable) rawEvent.preventDefault();
+          const vp = this.zoomViewportEl || this.stageEl;
+          const vpRect = vp.getBoundingClientRect();
+          const vpScale = Math.max(0.2, vpRect.width / Math.max(1, vp.clientWidth || vpRect.width));
+          this.contentPanX += (clientX - lastX) / vpScale;
+          this.contentPanY += (clientY - lastY) / vpScale;
+          lastX = clientX;
+          lastY = clientY;
+          this.applyContentZoomTransform(false);
+          return;
+        }
+
+        if (this.isScrollMode()) return;
+
+        const dx = clientX - startX;
+        const dy = clientY - startY;
 
         const getStageYRatio = (cy) => {
           const rect = this.stageEl.getBoundingClientRect();
@@ -331,6 +541,7 @@
         const dt = Math.max(1, now - lastMoveTime);
         velocityX = (clientX - lastX) / dt; // px/ms
         lastX = clientX;
+        lastY = clientY;
         lastMoveTime = now;
 
         const eff = this.getTurnEffect();
@@ -378,22 +589,43 @@
 
         this.cancelTurnSessionImmediate();
 
-        // Quick finger tap
-        if (!cancelled && Math.abs(dx) < 14 && Math.abs(dy) < 14 && dt < 340) {
+        // Quick finger tap (skip if user was panning zoomed content or just finished 2-finger pinch)
+        if (!cancelled && Date.now() - lastPinchEndAt > 320 && Math.abs(dx) < 14 && Math.abs(dy) < 14 && dt < 340) {
           this.handleTap(endX, endY, targetEl);
         }
       };
 
-      this.stageEl.addEventListener(
+      const touchTargetEl = this.zoomViewportEl || this.stageEl;
+
+      touchTargetEl.addEventListener(
         'touchstart',
         (e) => {
           lastNativeTouchAt = Date.now();
-          if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350) {
+          this._selectPointerDown = true;
+
+          // 2-Finger Pinch-to-Zoom on Book Content!
+          if (e.touches.length === 2) {
+            this._abortActiveTouch();
+            const t1 = e.touches[0];
+            const t2 = e.touches[1];
+            const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+            if (dist > 12) {
+              pinchSession = {
+                startDist: dist,
+                startZoom: this.contentZoom || 1,
+                lastMidX: (t1.clientX + t2.clientX) * 0.5,
+                lastMidY: (t1.clientY + t2.clientY) * 0.5,
+              };
+            }
+            return;
+          }
+
+          if (e.touches.length > 2 || pinchSession) {
             this._abortActiveTouch();
             return;
           }
-          if (e.touches.length !== 1) {
-            // Multi-point contact (e.g. resting palm + fingers) -> abort accidental turn
+
+          if (this.isPenBlockingInput(true) || Date.now() - lastPalmPointerAt < 350 || Date.now() - lastPinchEndAt < 240) {
             this._abortActiveTouch();
             return;
           }
@@ -407,11 +639,34 @@
         { passive: true }
       );
 
-      this.stageEl.addEventListener(
+      touchTargetEl.addEventListener(
         'touchmove',
         (e) => {
           lastNativeTouchAt = Date.now();
-          if (!pointerActive) return;
+          if (e.touches.length === 2) {
+            if (e.cancelable) e.preventDefault();
+            const t1 = e.touches[0];
+            const t2 = e.touches[1];
+            const dist = Math.max(8, Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY));
+            const midX = (t1.clientX + t2.clientX) * 0.5;
+            const midY = (t1.clientY + t2.clientY) * 0.5;
+            if (!pinchSession) {
+              pinchSession = {
+                startDist: dist,
+                startZoom: this.contentZoom || 1,
+                lastMidX: midX,
+                lastMidY: midY,
+              };
+              return;
+            }
+            const nextZoom = pinchSession.startZoom * (dist / pinchSession.startDist);
+            this.zoomContentAroundClientPoint(nextZoom, midX, midY, pinchSession.lastMidX, pinchSession.lastMidY, true);
+            pinchSession.lastMidX = midX;
+            pinchSession.lastMidY = midY;
+            return;
+          }
+
+          if (!pointerActive || pinchSession) return;
           if (e.touches.length !== 1 || this.isPalmTouchContact(e.touches[0])) {
             this._abortActiveTouch();
             return;
@@ -423,14 +678,119 @@
 
       const handleTouchFinish = (e, cancelled = false) => {
         lastNativeTouchAt = Date.now();
+        if (!e.touches || e.touches.length === 0) {
+          this._selectPointerDown = false;
+          setTimeout(() => this.maybeAutoLookupSingleSelectedWord(), 75);
+        }
+        if (pinchSession) {
+          if (!e.touches || e.touches.length < 2) {
+            pinchSession = null;
+            lastPinchEndAt = Date.now();
+            if (this.contentZoom < 1.03) {
+              this.resetContentZoom(true);
+            } else {
+              this.applyContentZoomTransform(false);
+            }
+          }
+          return;
+        }
         const touch = e.changedTouches?.[0];
         const endX = touch ? touch.clientX : lastX;
         const endY = touch ? touch.clientY : startY;
         finishFingerGesture(endX, endY, e.target, cancelled);
       };
 
-      this.stageEl.addEventListener('touchend', (e) => handleTouchFinish(e, false), { passive: true });
-      this.stageEl.addEventListener('touchcancel', (e) => handleTouchFinish(e, true), { passive: true });
+      touchTargetEl.addEventListener('touchend', (e) => handleTouchFinish(e, false), { passive: true });
+      touchTargetEl.addEventListener('touchcancel', (e) => handleTouchFinish(e, true), { passive: true });
+
+      // S Pen Text Mode ("Nhập chữ"): Precision Stylus Word Selection (Bôi đen 1 từ để tra cứu) & Tap Support!
+      let penTextDrag = null;
+      this.stageEl.addEventListener('pointerdown', (e) => {
+        this._selectPointerDown = true;
+        if (e.pointerType !== 'pen') return;
+        const penState = this.cb.getPenState?.();
+        if (penState?.spenMode !== 'text') return;
+        if (e.target.closest('button, input, textarea, select, a[href], a[data-epub-spine]')) return;
+
+        const startCaret = this.caretPosFromClient(e.clientX, e.clientY);
+        penTextDrag = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          startTime: Date.now(),
+          moved: false,
+          startCaret,
+          target: e.target,
+        };
+      });
+
+      window.addEventListener('pointermove', (e) => {
+        if (!penTextDrag || e.pointerId !== penTextDrag.pointerId) return;
+        const dist = Math.hypot(e.clientX - penTextDrag.startX, e.clientY - penTextDrag.startY);
+        if (dist < 6 && !penTextDrag.moved) return;
+        penTextDrag.moved = true;
+        if (!penTextDrag.startCaret) {
+          penTextDrag.startCaret = this.caretPosFromClient(e.clientX, e.clientY);
+          return;
+        }
+        const curCaret = this.caretPosFromClient(e.clientX, e.clientY);
+        if (!curCaret) return;
+
+        try {
+          const r1 = document.createRange();
+          r1.setStart(penTextDrag.startCaret.node, penTextDrag.startCaret.offset);
+          r1.collapse(true);
+          const r2 = document.createRange();
+          r2.setStart(curCaret.node, curCaret.offset);
+          r2.collapse(true);
+
+          const liveRange = document.createRange();
+          if (r1.compareBoundaryPoints(Range.START_TO_START, r2) <= 0) {
+            liveRange.setStart(penTextDrag.startCaret.node, penTextDrag.startCaret.offset);
+            liveRange.setEnd(curCaret.node, curCaret.offset);
+          } else {
+            liveRange.setStart(curCaret.node, curCaret.offset);
+            liveRange.setEnd(penTextDrag.startCaret.node, penTextDrag.startCaret.offset);
+          }
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(liveRange);
+        } catch (_) {}
+      });
+
+      const finishPenTextDrag = (e, cancelled) => {
+        this._selectPointerDown = false;
+        setTimeout(() => this.maybeAutoLookupSingleSelectedWord(), 75);
+        if (!penTextDrag || e.pointerId !== penTextDrag.pointerId) return;
+        const pd = penTextDrag;
+        penTextDrag = null;
+        if (cancelled) return;
+
+        const dt = Date.now() - pd.startTime;
+        if (pd.moved) {
+          this.snapSelectionToSingleWordIfPartial();
+          this.onSelectionChange(true);
+        } else if (dt >= 420 && pd.startCaret) {
+          // Long-press with S Pen on a word in Text Mode -> select that word & lookup!
+          const hit = getWordAndSentenceAtPoint(e.clientX, e.clientY, this.contentEl);
+          if (hit) {
+            this.cb.openDictionary({
+              query: hit.word,
+              context: hit.context,
+              bookId: this.bookMeta?.id || '',
+              bookTitle: this.bookMeta?.title || '',
+            });
+          }
+        } else if (dt < 380) {
+          this.handleTap(e.clientX, e.clientY, pd.target || e.target);
+        }
+      };
+      window.addEventListener('pointerup', (e) => finishPenTextDrag(e, false));
+      window.addEventListener('pointercancel', (e) => finishPenTextDrag(e, true));
+      window.addEventListener('mouseup', () => {
+        this._selectPointerDown = false;
+        setTimeout(() => this.maybeAutoLookupSingleSelectedWord(), 75);
+      });
 
       // PointerEvent finger fallback for Windows 2-in-1 Touchscreens (e.g. Galaxy Book5 360) if TouchEvents aren't emitted
       this.stageEl.addEventListener('pointerdown', (e) => {
@@ -852,6 +1212,7 @@
 
     closeBook() {
       this.cancelTurnSessionImmediate();
+      this.resetContentZoom(false);
       this.stopReadingTimer();
       this.clearSelection();
       this.closeHighlightModal();
@@ -936,6 +1297,7 @@
       this.isTransitioning = true;
       try {
         this.clearSelection();
+        if (this.contentZoom !== 1) this.resetContentZoom(false);
         this.chapterIndex = clamped;
         const chapter = await this.epub.loadChapter(clamped);
         if (!chapter) return;
@@ -1502,6 +1864,7 @@
 
     goToPage(pageIdx, withEffect = true, turnDir = 'next') {
       if (!this.epub || this.isScrollMode()) return;
+      if (this.contentZoom !== 1) this.resetContentZoom(false);
       const clamped = Math.max(0, Math.min(this.totalPages - 1, pageIdx));
       this.currentPage = clamped;
       const stride = this.pageW + this.pageGap;
@@ -1676,23 +2039,56 @@
       this.updateBookmarkIndicator();
     }
 
-    // ---- Selection & Highlights ----
-    onSelectionChange() {
+    // ---- Selection, Single-Word Lookup Gesture & Highlights ----
+    extractSingleLookupWord(rawText) {
+      const cleaned = String(rawText || '')
+        .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+        .trim();
+      if (!cleaned || cleaned.length < 2 || cleaned.length > 40) return null;
+      if (/\s/.test(cleaned)) return null;
+      if (!/^[\p{L}\p{M}'’-]+$/u.test(cleaned)) return null;
+      return cleaned;
+    }
+
+    maybeAutoLookupSingleSelectedWord() {
+      if (!this.pendingSelection || !this.epub || this.viewEl.classList.contains('hidden')) return;
+      const word = this.extractSingleLookupWord(this.pendingSelection.text);
+      if (!word) return;
+
+      const sig = `${this.chapterIndex}:${(this.pendingSelection.prefix || '').slice(-12)}:${word.toLowerCase()}`;
+      if (this._lastAutoLookupSig === sig) return;
+      this._lastAutoLookupSig = sig;
+
+      // Hide bottom selection bar so Dictionary sheet appears cleanly without overlapping bars
+      this.selBar?.classList.remove('open');
+      this.cb.openDictionary({
+        query: word,
+        context: this.pendingSelection.context,
+        bookId: this.bookMeta?.id || '',
+        bookTitle: this.bookMeta?.title || '',
+      });
+    }
+
+    onSelectionChange(immediateLookup = false) {
+      clearTimeout(this._singleWordSettleTimer);
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         this.pendingSelection = null;
+        this._lastAutoLookupSig = '';
         this.selBar?.classList.remove('open');
         return;
       }
       const range = sel.getRangeAt(0);
       if (!this.contentEl.contains(range.commonAncestorContainer)) {
         this.pendingSelection = null;
+        this._lastAutoLookupSig = '';
         this.selBar?.classList.remove('open');
         return;
       }
       const text = sel.toString().replace(/\s+/g, ' ').trim();
       if (!text) {
         this.pendingSelection = null;
+        this._lastAutoLookupSig = '';
         this.selBar?.classList.remove('open');
         return;
       }
@@ -1716,11 +2112,27 @@
         .slice(0, 220);
 
       this.pendingSelection = { text, prefix, suffix, context };
+
+      const singleWord = this.extractSingleLookupWord(text);
+      if (singleWord && (immediateLookup || !this._selectPointerDown)) {
+        this.maybeAutoLookupSingleSelectedWord();
+        return;
+      }
+
       this.selBar?.classList.add('open');
+
+      // Also support native mobile long-press word selection while finger rests briefly on the word
+      if (singleWord) {
+        this._singleWordSettleTimer = setTimeout(() => {
+          this.maybeAutoLookupSingleSelectedWord();
+        }, 420);
+      }
     }
 
     clearSelection() {
+      clearTimeout(this._singleWordSettleTimer);
       this.pendingSelection = null;
+      this._lastAutoLookupSig = '';
       this.selBar?.classList.remove('open');
       try {
         window.getSelection()?.removeAllRanges();

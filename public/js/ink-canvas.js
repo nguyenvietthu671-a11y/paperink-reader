@@ -115,6 +115,232 @@
 
   const QUICK_SIZES = [1.2, 2.2, 3.4, 5.2, 8.0];
 
+  function hsvToRgb(h, s, v) {
+    const c = v * s;
+    const hp = ((h % 360) + 360) % 360 / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    let r = 0, g = 0, b = 0;
+    if (hp < 1) [r, g, b] = [c, x, 0];
+    else if (hp < 2) [r, g, b] = [x, c, 0];
+    else if (hp < 3) [r, g, b] = [0, c, x];
+    else if (hp < 4) [r, g, b] = [0, x, c];
+    else if (hp < 5) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+    const m = v - c;
+    return [
+      Math.round((r + m) * 255),
+      Math.round((g + m) * 255),
+      Math.round((b + m) * 255),
+    ];
+  }
+
+  function rgbToHex(r, g, b) {
+    return (
+      '#' +
+      [r, g, b]
+        .map((n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0'))
+        .join('')
+        .toUpperCase()
+    );
+  }
+
+  function hexToHsv(hex) {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || '').trim());
+    if (!m) return { h: 215, s: 0.9, v: 0.85 };
+    const int = parseInt(m[1], 16);
+    const r = ((int >> 16) & 255) / 255;
+    const g = ((int >> 8) & 255) / 255;
+    const b = (int & 255) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0;
+    if (d > 1e-5) {
+      if (max === r) h = 60 * (((g - b) / d) % 6);
+      else if (max === g) h = 60 * ((b - r) / d + 2);
+      else h = 60 * ((r - g) / d + 4);
+    }
+    if (h < 0) h += 360;
+    const s = max === 0 ? 0 : d / max;
+    return { h, s, v: max };
+  }
+
+  class SpectrumColorWheel {
+    constructor({ canvas, thumb, valSlider, valLabel, previewSwatch, hexInput, onChange, onCommit }) {
+      this.canvas = canvas;
+      this.thumb = thumb;
+      this.valSlider = valSlider;
+      this.valLabel = valLabel;
+      this.previewSwatch = previewSwatch;
+      this.hexInput = hexInput;
+      this.onChange = onChange;
+      this.onCommit = onCommit;
+      this.h = 215;
+      this.s = 0.88;
+      this.v = 0.85;
+      this._wheelRendered = false;
+      this._dragging = false;
+      this.bind();
+    }
+
+    ensureRendered() {
+      if (!this.canvas || this._wheelRendered) return;
+      const size = 168;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const pxSize = Math.round(size * dpr);
+      this.canvas.width = pxSize;
+      this.canvas.height = pxSize;
+      const ctx = this.canvas.getContext('2d');
+      if (!ctx) return;
+
+      const img = ctx.createImageData(pxSize, pxSize);
+      const data = img.data;
+      const cx = pxSize / 2;
+      const cy = pxSize / 2;
+      const radius = pxSize / 2 - 1.5;
+
+      for (let y = 0; y < pxSize; y++) {
+        for (let x = 0; x < pxSize; x++) {
+          const dx = x - cx;
+          const dy = y - cy;
+          const dist = Math.hypot(dx, dy);
+          const idx = (y * pxSize + x) * 4;
+          if (dist > radius + 1.2) {
+            data[idx + 3] = 0;
+            continue;
+          }
+          const sat = Math.min(1, dist / radius);
+          let deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+          if (deg < 0) deg += 360;
+          const [r, g, b] = hsvToRgb(deg, sat, 1);
+          const aa = dist > radius - 0.8 ? Math.max(0, Math.min(1, radius + 1.2 - dist) / 2) : 1;
+          data[idx] = r;
+          data[idx + 1] = g;
+          data[idx + 2] = b;
+          data[idx + 3] = Math.round(aa * 255);
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      this._wheelRendered = true;
+    }
+
+    setHex(hex, silent = true) {
+      if (!/^#[0-9a-fA-F]{6}$/.test(String(hex || ''))) return;
+      const hsv = hexToHsv(hex);
+      this.h = hsv.h;
+      this.s = hsv.s;
+      this.v = Math.max(0.1, hsv.v);
+      this.syncUI();
+      if (!silent) this.onChange?.(this.getHex());
+    }
+
+    getHex() {
+      const [r, g, b] = hsvToRgb(this.h, this.s, this.v);
+      return rgbToHex(r, g, b);
+    }
+
+    syncUI() {
+      this.ensureRendered();
+      const hex = this.getHex();
+      const [pr, pg, pb] = hsvToRgb(this.h, this.s, 1);
+      const pureHex = rgbToHex(pr, pg, pb);
+
+      if (this.thumb && this.canvas) {
+        const rect = this.canvas.getBoundingClientRect();
+        const w = rect.width || 168;
+        const r = w / 2 - 4;
+        const rad = (this.h * Math.PI) / 180;
+        const tx = w / 2 + Math.cos(rad) * (this.s * r);
+        const ty = w / 2 + Math.sin(rad) * (this.s * r);
+        this.thumb.style.left = `${tx.toFixed(1)}px`;
+        this.thumb.style.top = `${ty.toFixed(1)}px`;
+        this.thumb.style.background = hex;
+      }
+      if (this.previewSwatch) {
+        this.previewSwatch.style.background = hex;
+      }
+      if (this.hexInput && document.activeElement !== this.hexInput) {
+        this.hexInput.value = hex;
+      }
+      if (this.valSlider) {
+        const pct = Math.round(this.v * 100);
+        this.valSlider.value = String(pct);
+        this.valSlider.style.background = `linear-gradient(90deg, #171717 0%, ${pureHex} 100%)`;
+        if (this.valLabel) this.valLabel.textContent = `${pct}%`;
+      }
+    }
+
+    pickFromClientPoint(clientX, clientY) {
+      if (!this.canvas) return;
+      const rect = this.canvas.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const radius = Math.max(1, rect.width / 2 - 3);
+      const dx = clientX - cx;
+      const dy = clientY - cy;
+      let deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+      if (deg < 0) deg += 360;
+      this.h = deg;
+      this.s = Math.max(0, Math.min(1, Math.hypot(dx, dy) / radius));
+      this.syncUI();
+      this.onChange?.(this.getHex());
+    }
+
+    bind() {
+      if (!this.canvas) return;
+      this.canvas.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this._dragging = true;
+        try {
+          this.canvas.setPointerCapture?.(e.pointerId);
+        } catch (_) {}
+        this.pickFromClientPoint(e.clientX, e.clientY);
+      });
+      this.canvas.addEventListener('pointermove', (e) => {
+        if (!this._dragging) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.pickFromClientPoint(e.clientX, e.clientY);
+      });
+      const finish = (e) => {
+        if (!this._dragging) return;
+        this._dragging = false;
+        try {
+          this.canvas.releasePointerCapture?.(e.pointerId);
+        } catch (_) {}
+        this.onCommit?.(this.getHex());
+      };
+      this.canvas.addEventListener('pointerup', finish);
+      this.canvas.addEventListener('pointercancel', finish);
+
+      this.valSlider?.addEventListener('input', () => {
+        this.v = Math.max(0.1, Math.min(1, parseInt(this.valSlider.value, 10) / 100));
+        this.syncUI();
+        this.onChange?.(this.getHex());
+      });
+      this.valSlider?.addEventListener('change', () => {
+        this.onCommit?.(this.getHex());
+      });
+      this.hexInput?.addEventListener('input', () => {
+        let raw = this.hexInput.value.trim();
+        if (/^[0-9a-fA-F]{6}$/.test(raw)) raw = `#${raw}`;
+        if (/^#[0-9a-fA-F]{6}$/.test(raw)) {
+          const hsv = hexToHsv(raw);
+          this.h = hsv.h;
+          this.s = hsv.s;
+          this.v = Math.max(0.1, hsv.v);
+          this.syncUI();
+          this.onChange?.(raw.toUpperCase());
+          this.onCommit?.(raw.toUpperCase());
+        }
+      });
+    }
+  }
+
+  window.PaperInkSpectrumWheel = SpectrumColorWheel;
+
   class SPenInkCanvas {
     constructor({ onSavePage, onActiveChange, onPenDetected, toast }) {
       this.onSavePage = onSavePage;
@@ -124,6 +350,7 @@
 
       this.canvas = document.getElementById('ink-canvas');
       this.stage = document.getElementById('reader-stage');
+      this.zoomViewport = document.getElementById('reader-zoom-viewport');
       this.readerView = document.getElementById('reader-view');
       this.toolbar = document.getElementById('pen-toolbar');
       this.quickPill = document.getElementById('spen-quick-pill');
@@ -134,9 +361,11 @@
 
       this.active = false;
       this.detailOpen = false;
-      // Smart Dual Mode ON by default: S Pen writes notes immediately, Finger turns pages & rejects palm!
+      // S-Pen 2 Modes: 'ink' (Dùng bút viết/highlight) vs 'text' (Nhập chữ & Bôi đen tra từ) — never forces quitting S-Pen!
+      this.spenMode = localStorage.getItem('paperink_spen_mode') === 'text' ? 'text' : 'ink';
       this.sPenOnly = localStorage.getItem('paperink_spen_smart_mode') !== '0';
       this.autoSPenDetect = true;
+      this.multiTouchPinching = false;
 
       this.penHovering = false;
       this.penDown = false;
@@ -156,6 +385,7 @@
       this.straightHighlighter = false;
       this.eraserMode = 'stroke'; // stroke | area
       this.eraserSize = 18;
+      this.recentCustomColors = this.loadRecentColors();
 
       // Remember per-tool width/opacity/color preferences like Samsung Notes
       this.toolPrefs = {
@@ -190,9 +420,101 @@
       this._hlStartClient = null;
       this._lastMoveClient = null;
 
+      this.spectrumWheel = new SpectrumColorWheel({
+        canvas: document.getElementById('pen-spectrum-canvas'),
+        thumb: document.getElementById('pen-spectrum-thumb'),
+        valSlider: document.getElementById('pen-spectrum-val'),
+        valLabel: document.getElementById('pen-spectrum-val-lbl'),
+        previewSwatch: document.getElementById('pen-spectrum-preview-swatch'),
+        hexInput: document.getElementById('pen-spectrum-hex-input'),
+        onChange: (hex) => {
+          this.color = hex;
+          if (this.tool === 'eraser') this.selectTool(this.lastNonEraserTool || 'fountain', false);
+          this.toolPrefs[this.tool] = { width: this.width, opacity: this.opacity, color: this.color };
+          this.syncToolbarUI();
+        },
+        onCommit: (hex) => {
+          this.pushRecentColor(hex);
+        },
+      });
+
       this.bindEvents();
       this.renderPaletteTabs();
+      this.syncSPenModeClasses();
       this.syncToolbarUI();
+    }
+
+    loadRecentColors() {
+      try {
+        const raw = localStorage.getItem('paperink_recent_spectrum_colors');
+        const arr = raw ? JSON.parse(raw) : null;
+        if (Array.isArray(arr) && arr.length) return arr.slice(0, 6);
+      } catch (_) {}
+      return ['#0B57D0', '#D93025', '#188038', '#7627BB', '#E37400', '#FDD835'];
+    }
+
+    pushRecentColor(hex) {
+      if (!/^#[0-9a-fA-F]{6}$/.test(String(hex || ''))) return;
+      const up = hex.toUpperCase();
+      this.recentCustomColors = [up, ...this.recentCustomColors.filter((c) => c.toUpperCase() !== up)].slice(0, 6);
+      try {
+        localStorage.setItem('paperink_recent_spectrum_colors', JSON.stringify(this.recentCustomColors));
+      } catch (_) {}
+      this.renderRecentColors();
+      this.renderColorSwatches();
+    }
+
+    renderRecentColors() {
+      const wrap = document.getElementById('pen-recent-colors');
+      if (!wrap) return;
+      const curUpper = String(this.color || '').toUpperCase();
+      wrap.innerHTML = this.recentCustomColors
+        .map(
+          (hex) =>
+            `<button class="pen-color-dot ${curUpper === hex.toUpperCase() ? 'active' : ''}" data-pencolor="${hex}" style="background:${hex}" title="${hex}" aria-label="Màu ${hex}" type="button"></button>`
+        )
+        .join('');
+    }
+
+    syncSPenModeClasses() {
+      const isText = this.spenMode === 'text';
+      this.stage?.classList.toggle('spen-text-mode', isText);
+      this.readerView?.classList.toggle('spen-text-mode', isText);
+      if (isText) {
+        this.stage?.classList.remove('spen-in-range');
+      }
+      document.querySelectorAll('[data-spen-mode]').forEach((btn) => {
+        const act = btn.dataset.spenMode === this.spenMode;
+        btn.classList.toggle('active', act);
+        btn.setAttribute('aria-checked', String(act));
+      });
+    }
+
+    setSPenMode(mode, { announce = true } = {}) {
+      const next = mode === 'text' ? 'text' : 'ink';
+      this.spenMode = next;
+      try {
+        localStorage.setItem('paperink_spen_mode', next);
+      } catch (_) {}
+
+      if (next === 'text') {
+        this.setPenInRange(false);
+        this.updateEraserCursor(null, true);
+        if (this.active) {
+          this.setActive(false);
+        }
+      }
+      this.syncSPenModeClasses();
+      this.syncCanvasPointerClasses();
+      this.syncToolbarUI();
+      this.wakeQuickPill();
+      if (announce) {
+        this.toast?.(
+          next === 'text'
+            ? 'S Pen → Nhập chữ: Bôi đen 1 từ để tra cứu ngay & viết vào ô nhập liệu'
+            : 'S Pen → Dùng bút: Viết ghi chú & highlight trực tiếp trên trang'
+        );
+      }
     }
 
     loadFavorites() {
@@ -220,6 +542,7 @@
     }
 
     shouldRejectTouchAsPalm() {
+      if (this.spenMode === 'text') return false;
       return Boolean(
         this.drawing ||
           this.penDown ||
@@ -229,6 +552,7 @@
     }
 
     shouldSuppressSyntheticTap() {
+      if (this.spenMode === 'text') return false;
       return Boolean(
         this.drawing ||
           this.penDown ||
@@ -238,6 +562,10 @@
 
     setPenInRange(inRange) {
       clearTimeout(this._rangeDecayTimer);
+      if (this.spenMode === 'text') {
+        this.stage?.classList.remove('spen-in-range');
+        return;
+      }
       const on = Boolean(inRange);
       this.stage?.classList.toggle('spen-in-range', on);
       if (on && !this.drawing && !this.penDown) {
@@ -251,16 +579,23 @@
     }
 
     isDrawingEnabledForPointer(e) {
-      if (!this.bookId || !this.pageKey) return false;
-      if (e.pointerType === 'pen' && (this.active || this.autoSPenDetect)) return true;
-      if (!this.active) return false;
+      if (!this.bookId || !this.pageKey || this.multiTouchPinching) return false;
+      if (e.target?.closest?.('input, textarea, select, [contenteditable="true"], button, a[href], a[data-epub-spine]')) {
+        return false;
+      }
+      if (e.pointerType === 'pen') {
+        if (this.spenMode === 'text') return false;
+        return Boolean(this.active || this.autoSPenDetect);
+      }
+      if (!this.active || this.spenMode === 'text') return false;
       if (this.sPenOnly && e.pointerType !== 'pen') return false;
       return true;
     }
 
     syncCanvasPointerClasses() {
-      this.canvas?.classList.toggle('pen-active', this.active);
-      this.canvas?.classList.toggle('draw-with-all', Boolean(this.active && !this.sPenOnly));
+      const inkOn = Boolean(this.active && this.spenMode === 'ink');
+      this.canvas?.classList.toggle('pen-active', inkOn);
+      this.canvas?.classList.toggle('draw-with-all', Boolean(inkOn && !this.sPenOnly));
     }
 
     wakeQuickPill() {
@@ -326,8 +661,10 @@
 
     updateStageClearance() {
       const rv = this.readerView || document.getElementById('reader-view');
-      if (!rv || !this.stage || !this.toolbar) return;
+      const zv = this.zoomViewport || document.getElementById('reader-zoom-viewport') || this.stage;
+      if (!rv || !zv || !this.toolbar) return;
       this.readerView = rv;
+      this.zoomViewport = zv;
 
       rv.classList.toggle('pen-bar-open', this.active);
       if (!this.active) {
@@ -336,16 +673,16 @@
       }
 
       requestAnimationFrame(() => {
-        if (!this.active || !this.stage || !this.toolbar) return;
-        const isScroll = this.stage.classList.contains('mode-scroll');
+        if (!this.active || !zv || !this.toolbar) return;
+        const isScroll = this.stage?.classList.contains('mode-scroll');
         if (isScroll) {
           rv.style.removeProperty('--pen-stage-scale');
           return;
         }
         const tbRect = this.toolbar.getBoundingClientRect();
         const rvRect = rv.getBoundingClientRect();
-        const stageTop = rvRect.top + this.stage.offsetTop;
-        const naturalH = Math.max(1, this.stage.offsetHeight);
+        const stageTop = rvRect.top + zv.offsetTop;
+        const naturalH = Math.max(1, zv.offsetHeight);
         // Reserve 14px breathing room above pen-toolbar so nib buttons NEVER touch book content!
         const safeBottomY = tbRect.height > 0 ? tbRect.top - 14 : rvRect.bottom - 122;
         const availH = Math.max(180, safeBottomY - stageTop);
@@ -357,17 +694,30 @@
     syncQuickPillUI() {
       if (!this.quickPill) return;
       const shouldShow = Boolean(
-        this.bookId && !this.active && (this.spenDetectedInSession || this.strokes.length > 0)
+        this.bookId && !this.active && (this.spenDetectedInSession || this.strokes.length > 0 || this.spenMode === 'text')
       );
       this.quickPill.classList.toggle('hidden', !shouldShow);
       this.readerView?.classList.toggle('spen-pill-visible', shouldShow);
+      this.syncSPenModeClasses();
       if (!shouldShow) return;
+
+      const isInkMode = this.spenMode === 'ink';
+      document.getElementById('spen-pill-ink-tools')?.classList.toggle('hidden', !isInkMode);
 
       const isEraser = this.tool === 'eraser' || this.barrelEraserActive;
       const dotEl = document.getElementById('spen-pill-color-dot');
       const nameEl = document.getElementById('spen-pill-tool-name');
       const erBtn = document.getElementById('spen-pill-eraser-btn');
       const undoBtn = document.getElementById('spen-pill-undo-btn');
+
+      const shortNames = {
+        fountain: 'Máy',
+        ballpoint: 'Bi',
+        calligraphy: 'Cọ',
+        pencil: 'Chì',
+        highlighter: 'Dạ quang',
+        eraser: 'Tẩy',
+      };
 
       if (dotEl) {
         dotEl.style.background = isEraser
@@ -378,8 +728,8 @@
       }
       if (nameEl) {
         nameEl.textContent = this.barrelEraserActive
-          ? 'Tẩy (Nút S Pen)'
-          : TOOL_META[this.tool]?.label || 'Bút máy';
+          ? 'Tẩy'
+          : shortNames[this.tool] || 'Bút';
       }
       if (erBtn) {
         erBtn.classList.toggle('active', isEraser);
@@ -391,7 +741,14 @@
 
     setActive(flag) {
       this.active = Boolean(flag);
+      if (this.active && this.spenMode === 'text') {
+        this.spenMode = 'ink';
+        try {
+          localStorage.setItem('paperink_spen_mode', 'ink');
+        } catch (_) {}
+      }
       if (!this.active) this.setDetailOpen(false);
+      this.syncSPenModeClasses();
       this.syncCanvasPointerClasses();
       this.toolbar?.classList.toggle('open', this.active);
       document.getElementById('hud-pen-btn')?.classList.toggle('active', this.active);
@@ -913,20 +1270,29 @@
     renderPaletteTabs() {
       const tabsEl = document.getElementById('pen-palette-tabs');
       if (!tabsEl) return;
-      tabsEl.innerHTML = COLOR_PALETTES.map(
-        (pal) => `
+      const allTabs = [{ id: 'spectrum', name: 'Quang phổ' }, ...COLOR_PALETTES];
+      tabsEl.innerHTML = allTabs
+        .map(
+          (pal) => `
           <button class="pen-pal-tab ${pal.id === this.activePaletteId ? 'active' : ''}"
                   data-pen-palette="${pal.id}"
-                  type="button">${pal.name}</button>
+                  type="button">${pal.id === 'spectrum' ? '<span class="rainbow-wheel tab-mini-wheel" aria-hidden="true"></span><span>Quang phổ</span>' : pal.name}</button>
         `
-      ).join('');
+        )
+        .join('');
     }
 
     renderColorSwatches() {
+      const isSpectrum = this.activePaletteId === 'spectrum';
       const pal = this.getActivePalette();
       const quickEl = document.getElementById('pen-quick-colors');
       const fullEl = document.getElementById('pen-palette-grid');
+      const specPanel = document.getElementById('pen-spectrum-panel');
       const curUpper = String(this.color || 'auto').toUpperCase();
+
+      fullEl?.classList.toggle('hidden', isSpectrum);
+      specPanel?.classList.toggle('hidden', !isSpectrum);
+      document.getElementById('pen-spectrum-btn')?.classList.toggle('active', Boolean(this.detailOpen && isSpectrum));
 
       const makeDot = (c) => {
         const isAuto = c.hex === 'auto';
@@ -936,10 +1302,23 @@
       };
 
       if (quickEl) {
-        quickEl.innerHTML = pal.colors.slice(0, 6).map(makeDot).join('');
+        const quickList = pal.colors.slice(0, 5);
+        const hasActiveInQuick = quickList.some((c) =>
+          c.hex === 'auto' ? this.color === 'auto' : c.hex.toUpperCase() === curUpper
+        );
+        if (!hasActiveInQuick && this.color && this.color !== 'auto') {
+          quickList[4] = { hex: this.color, name: `Màu đang chọn (${this.color})` };
+        }
+        quickEl.innerHTML = quickList.map(makeDot).join('');
       }
-      if (fullEl) {
+      if (fullEl && !isSpectrum) {
         fullEl.innerHTML = pal.colors.map(makeDot).join('');
+      }
+      if (isSpectrum && this.spectrumWheel) {
+        requestAnimationFrame(() => {
+          this.spectrumWheel.setHex(resolveStrokeColor(this.color), true);
+          this.renderRecentColors();
+        });
       }
     }
 
@@ -1155,11 +1534,22 @@
         this.setDetailOpen(false);
       });
 
-      // Suppress browser/OS context menu when pressing S Pen side barrel button on page!
+      // Global Wacom EMR / S Pen Auto-Detection anywhere in the app
+      const detectGlobalPen = (e) => {
+        if (e.pointerType !== 'pen') return;
+        if (!this.spenDetectedInSession) {
+          this.spenDetectedInSession = true;
+          this.syncQuickPillUI();
+        }
+      };
+      document.addEventListener('pointerenter', detectGlobalPen, { capture: true, passive: true });
+      document.addEventListener('pointerdown', detectGlobalPen, { capture: true, passive: true });
+
+      // Suppress browser/OS context menu when pressing S Pen side barrel button or writing ink!
       this.stage.addEventListener(
         'contextmenu',
         (e) => {
-          if (this.penHovering || this.penDown || this.drawing || this.barrelEraserActive) {
+          if (this.barrelEraserActive || (this.spenMode === 'ink' && (this.penHovering || this.penDown || this.drawing))) {
             e.preventDefault();
             e.stopPropagation();
           }
@@ -1172,14 +1562,19 @@
         if (!this.bookId || e.pointerType !== 'pen') return;
         this.penHovering = true;
         this.lastPenEventAt = Date.now();
-        this.setPenInRange(true);
-        this.updateEraserCursor(e, false);
-        this.onPenDetected?.();
         if (!this.spenDetectedInSession) {
           this.spenDetectedInSession = true;
           this.syncQuickPillUI();
         }
         this.wakeQuickPill();
+        if (this.spenMode === 'text') {
+          this.setPenInRange(false);
+          this.updateEraserCursor(null, true);
+          return;
+        }
+        this.setPenInRange(true);
+        this.updateEraserCursor(e, false);
+        this.onPenDetected?.();
       };
 
       this.stage.addEventListener('pointerenter', onStagePenHover, { capture: true });
@@ -1206,9 +1601,15 @@
         { capture: true }
       );
 
-      // Prevent Android Chrome / Samsung Internet / Safari from cancelling S Pen strokes with native scroll
+      // Prevent Android Chrome / Samsung Internet / Safari from cancelling S Pen strokes with native scroll ONLY in Ink Mode & single touch
       const blockStylusNativePan = (e) => {
         if (!this.bookId) return;
+        if (e.touches && e.touches.length >= 2) {
+          this.multiTouchPinching = true;
+          return;
+        }
+        this.multiTouchPinching = false;
+        if (this.spenMode === 'text') return;
         const firstTouch = e.touches?.[0];
         const isStylusTouch = firstTouch && firstTouch.touchType === 'stylus';
         if (this.drawing || this.penDown || this.isPenHoverFresh() || isStylusTouch) {
@@ -1217,6 +1618,9 @@
       };
       this.stage.addEventListener('touchstart', blockStylusNativePan, { capture: true, passive: false });
       this.stage.addEventListener('touchmove', blockStylusNativePan, { capture: true, passive: false });
+      this.stage.addEventListener('touchend', (e) => {
+        if (!e.touches || e.touches.length < 2) this.multiTouchPinching = false;
+      }, { passive: true });
 
       // Capture-phase Seamless S Pen Writing (Zero-Mode: write anytime, finger still turns pages!)
       this.stage.addEventListener(
@@ -1434,6 +1838,29 @@
       this.stage.addEventListener('pointercancel', handleUp, { capture: true });
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
+
+      // 2-Mode S Pen Switcher buttons (in both Quick Pill and Pen Toolbar)
+      document.addEventListener('click', (e) => {
+        const modeBtn = e.target.closest('[data-spen-mode]');
+        if (modeBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.setSPenMode(modeBtn.dataset.spenMode, { announce: true });
+        }
+      });
+
+      document.getElementById('pen-spectrum-btn')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.detailOpen && this.activePaletteId === 'spectrum') {
+          this.setDetailOpen(false);
+        } else {
+          if (this.tool === 'eraser') this.selectTool(this.lastNonEraserTool || 'fountain', false);
+          this.activePaletteId = 'spectrum';
+          this.setDetailOpen(true);
+          this.syncToolbarUI();
+        }
+      });
 
       // Quick Pill actions (non-intrusive mini pill when full toolbar is collapsed)
       document.getElementById('spen-pill-open-btn')?.addEventListener('click', (e) => {

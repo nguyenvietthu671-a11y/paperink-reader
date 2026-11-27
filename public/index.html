@@ -2,7 +2,7 @@
 <html lang="vi" data-theme="apple">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#F8F9FA" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -350,28 +350,37 @@
       <span id="micro-chapter-title"></span>
     </div>
 
-    <div id="reader-stage" class="reader-stage mode-paginated">
-      <div id="page-mask" class="page-mask">
-        <article id="chapter-content" class="chapter-content"></article>
-      </div>
-      <!-- Interactive Physical 3D 2-Page Curl Stage (Directional Right->Left & Left->Right) -->
-      <div id="curl-stage" class="curl-stage hidden" aria-hidden="true">
-        <div id="curl-under-veil" class="curl-under-veil"></div>
-        <div id="curl-under-shadow" class="curl-under-shadow"></div>
-        <div id="curl-top-sheet" class="curl-top-sheet"></div>
-        <div id="curl-crease-shade" class="curl-crease-shade"></div>
-        <div id="curl-flap" class="curl-flap">
-          <div id="curl-flap-mirror" class="curl-flap-mirror"></div>
-          <div id="curl-flap-back" class="curl-flap-back"></div>
+    <!-- Content-Only Pinch-Zoom & Pan Viewport (Toolbars stay 100% unzoomed!) -->
+    <div id="reader-zoom-viewport" class="reader-zoom-viewport">
+      <div id="reader-stage" class="reader-stage mode-paginated">
+        <div id="page-mask" class="page-mask">
+          <article id="chapter-content" class="chapter-content"></article>
+        </div>
+        <!-- Interactive Physical 3D 2-Page Curl Stage (Directional Right->Left & Left->Right) -->
+        <div id="curl-stage" class="curl-stage hidden" aria-hidden="true">
+          <div id="curl-under-veil" class="curl-under-veil"></div>
+          <div id="curl-under-shadow" class="curl-under-shadow"></div>
+          <div id="curl-top-sheet" class="curl-top-sheet"></div>
+          <div id="curl-crease-shade" class="curl-crease-shade"></div>
+          <div id="curl-flap" class="curl-flap">
+            <div id="curl-flap-mirror" class="curl-flap-mirror"></div>
+            <div id="curl-flap-back" class="curl-flap-back"></div>
+          </div>
+        </div>
+        <!-- Samsung Notes-style S Pen pressure-sensitive Ink Layer -->
+        <canvas id="ink-canvas" class="ink-canvas" aria-label="Bảng viết tay S Pen trên trang sách"></canvas>
+        <!-- S Pen Side-Button / Eraser Live Ring Indicator -->
+        <div id="spen-eraser-cursor" class="spen-eraser-cursor hidden" aria-hidden="true">
+          <span class="spen-eraser-badge">Tẩy</span>
         </div>
       </div>
-      <!-- Samsung Notes-style S Pen pressure-sensitive Ink Layer -->
-      <canvas id="ink-canvas" class="ink-canvas" aria-label="Bảng viết tay S Pen trên trang sách"></canvas>
-      <!-- S Pen Side-Button / Eraser Live Ring Indicator -->
-      <div id="spen-eraser-cursor" class="spen-eraser-cursor hidden" aria-hidden="true">
-        <span class="spen-eraser-badge">Tẩy</span>
-      </div>
     </div>
+
+    <!-- Floating Content Zoom Reset Indicator (Only visible when content is zoomed > 100%) -->
+    <button id="reader-zoom-badge" class="reader-zoom-badge glass-chrome hidden" type="button" title="Chạm để thu về 100%" aria-label="Đặt lại mức phóng nội dung 100%">
+      <span id="reader-zoom-pct" class="tabular">100%</span>
+      <span class="zoom-reset-lbl">Đặt lại</span>
+    </button>
 
     <!-- Optional Pill Reading Progress Bar -->
     <div id="reader-progress-pill-wrap" class="reader-progress-pill-wrap hidden">
@@ -478,18 +487,41 @@
         </div>
       </div>
 
-      <!-- Curated Color Palettes (Samsung Notes Palette Suggestions) -->
+      <!-- Curated Color Palettes + Interactive 360° Spectrum Wheel -->
       <div id="pen-colors-section" class="pen-detail-block">
         <div class="pen-pal-head">
-          <span class="pen-pal-label">Gợi ý bảng màu</span>
-          <label class="pen-custom-wheel" title="Chọn màu tự do">
-            <input id="pen-custom-color" type="color" value="#0B57D0" aria-label="Chọn màu bút tự do" />
-            <span class="rainbow-wheel pen-mini-wheel" aria-hidden="true"></span>
-            <span id="pen-custom-hex" class="tabular">Auto</span>
-          </label>
+          <span class="pen-pal-label">Bảng màu &amp; Vòng quang phổ</span>
+          <span id="pen-custom-hex" class="pen-active-hex-pill tabular">Auto</span>
         </div>
         <div id="pen-palette-tabs" class="pen-palette-tabs" role="tablist" aria-label="Bộ sưu tập bảng màu"></div>
         <div id="pen-palette-grid" class="pen-palette-grid"></div>
+
+        <!-- Interactive 360° Hue × Saturation Spectrum Color Wheel -->
+        <div id="pen-spectrum-panel" class="pen-spectrum-panel hidden">
+          <div class="spectrum-wheel-layout">
+            <div class="spectrum-canvas-wrap">
+              <canvas id="pen-spectrum-canvas" class="spectrum-wheel-canvas" width="168" height="168" aria-label="Vòng quang phổ chọn màu mực"></canvas>
+              <span id="pen-spectrum-thumb" class="spectrum-wheel-thumb" aria-hidden="true"></span>
+            </div>
+            <div class="spectrum-side-controls">
+              <div class="spectrum-preview-row">
+                <span id="pen-spectrum-preview-swatch" class="spectrum-preview-swatch"></span>
+                <input id="pen-spectrum-hex-input" class="spectrum-hex-input tabular" type="text" maxlength="7" value="#0B57D0" aria-label="Mã màu Hex" />
+              </div>
+              <div class="spectrum-val-group">
+                <div class="spectrum-val-meta">
+                  <label for="pen-spectrum-val">Độ sáng màu</label>
+                  <span id="pen-spectrum-val-lbl" class="tabular">90%</span>
+                </div>
+                <input id="pen-spectrum-val" class="spectrum-val-slider" type="range" min="10" max="100" step="1" value="90" />
+              </div>
+              <div class="spectrum-recent-wrap">
+                <span class="spectrum-mini-lbl">Màu vừa chọn</span>
+                <div id="pen-recent-colors" class="spectrum-recent-dots"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Favorite Pens Quick Strip -->
@@ -499,21 +531,33 @@
       </div>
     </div>
 
-    <!-- Non-Intrusive Floating S Pen Quick Pill (Auto-appears on S Pen hover/write without blocking Finger Page Turns!) -->
-    <div id="spen-quick-pill" class="spen-quick-pill glass-chrome hidden" role="toolbar" aria-label="Công cụ nhanh bút S Pen">
-      <button class="spen-pill-main" id="spen-pill-open-btn" type="button" title="Mở bảng chọn bút &amp; bảng màu S Pen">
-        <span id="spen-pill-color-dot" class="spen-pill-color-dot"></span>
-        <span id="spen-pill-tool-name" class="spen-pill-tool-name">Bút máy</span>
-      </button>
-      <button class="spen-pill-icon" id="spen-pill-eraser-btn" type="button" title="Đổi nhanh Bút / Tẩy" aria-label="Chuyển đổi nhanh tẩy">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1-1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
-      </button>
-      <button class="spen-pill-icon" id="spen-pill-undo-btn" type="button" title="Hoàn tác nét vừa viết" aria-label="Hoàn tác nét viết">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
-      </button>
+    <!-- Non-Intrusive Top-Gutter S Pen Dual-Mode Switcher Pill (Dùng bút vs Nhập chữ — Never forces quitting S Pen!) -->
+    <div id="spen-quick-pill" class="spen-quick-pill glass-chrome hidden" role="toolbar" aria-label="Chế độ S Pen: Dùng bút hoặc Nhập chữ">
+      <div class="spen-mode-seg" role="radiogroup" aria-label="Chuyển chế độ S Pen">
+        <button class="spen-mode-btn active" data-spen-mode="ink" type="button" title="Chế độ Dùng bút: S Pen viết ghi chú &amp; highlight trên trang">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          <span>Dùng bút</span>
+        </button>
+        <button class="spen-mode-btn" data-spen-mode="text" type="button" title="Chế độ Nhập chữ: S Pen bôi đen tra từ, chọn văn bản &amp; viết chữ vào ô nhập">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          <span>Nhập chữ</span>
+        </button>
+      </div>
+      <div id="spen-pill-ink-tools" class="spen-pill-ink-tools">
+        <button class="spen-pill-main" id="spen-pill-open-btn" type="button" title="Mở bảng ngòi bút &amp; vòng quang phổ màu">
+          <span id="spen-pill-color-dot" class="spen-pill-color-dot"></span>
+          <span id="spen-pill-tool-name" class="spen-pill-tool-name">Máy</span>
+        </button>
+        <button class="spen-pill-icon" id="spen-pill-eraser-btn" type="button" title="Đổi nhanh Bút / Tẩy" aria-label="Chuyển đổi nhanh tẩy">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+        </button>
+        <button class="spen-pill-icon" id="spen-pill-undo-btn" type="button" title="Hoàn tác nét vừa viết" aria-label="Hoàn tác nét viết">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+        </button>
+      </div>
     </div>
 
-    <!-- Samsung Notes-Style 6-Pen Floating S Pen Toolbar -->
+    <!-- Samsung Notes-Style 6-Pen Floating S Pen Toolbar (Viewport-safe, zero horizontal overflow!) -->
     <div id="pen-toolbar" class="pen-toolbar glass-chrome" role="toolbar" aria-label="Thanh bút S Pen ghi chú trực tiếp">
       <div class="pen-row-top">
         <div class="pen-tools-group" role="group" aria-label="Chọn loại bút">
@@ -529,10 +573,10 @@
           <button class="pen-tool-btn" data-pentool="pencil" type="button" title="Bút chì (Graphite Pencil — vân than mềm)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
           </button>
-          <button class="pen-tool-btn" data-pentool="highlighter" type="button" title="Bút dạ quang (Chisel Highlighter — hỗ trợ kẻ thẳng)">
+          <button class="pen-tool-btn" data-pentool="highlighter" type="button" title="Bút dạ quang (Chisel Highlighter — kẻ & nhấn giữ 0.3s để nắn thẳng dòng)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
           </button>
-          <button class="pen-tool-btn" data-pentool="eraser" type="button" title="Tẩy (Tẩy theo nét / Tẩy vùng)">
+          <button class="pen-tool-btn" data-pentool="eraser" type="button" title="Tẩy (Hoặc ấn giữ nút trên thân S Pen để tẩy nhanh)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
           </button>
         </div>
@@ -547,20 +591,30 @@
           <button class="pen-mini-btn danger" id="pen-clear-btn" type="button" title="Xóa toàn bộ nét trên trang này" aria-label="Xóa trang viết">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
           </button>
+          <button class="pen-mini-btn pen-collapse-btn" id="pen-done-btn" type="button" title="Thu gọn thanh bút (S Pen vẫn giữ nguyên chế độ)" aria-label="Thu gọn thanh bút">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
         </div>
       </div>
 
       <div class="pen-row-bottom">
-        <div id="pen-quick-colors" class="pen-colors-group" role="group" aria-label="Chọn nhanh màu mực"></div>
+        <div class="pen-colors-strip-wrap">
+          <div id="pen-quick-colors" class="pen-colors-group" role="group" aria-label="Chọn nhanh màu mực"></div>
+          <button class="pen-spectrum-trigger" id="pen-spectrum-btn" type="button" title="Chọn màu theo vòng quang phổ" aria-label="Mở vòng quang phổ chọn màu">
+            <span class="rainbow-wheel pen-mini-wheel" aria-hidden="true"></span>
+          </button>
+        </div>
 
         <div class="pen-right-pills">
-          <button class="pen-chip-btn pen-expand-btn" id="pen-expand-btn" type="button" title="Mở bảng chọn nét & gợi ý bảng màu Samsung Notes">
+          <button class="pen-chip-btn pen-expand-btn" id="pen-expand-btn" type="button" title="Cỡ nét, bảng màu &amp; vòng quang phổ">
             <span id="pen-expand-dot" class="pen-expand-dot"></span>
             <span id="pen-expand-val" class="tabular">2.4</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
           </button>
-          <button class="pen-chip-btn active" id="pen-spen-only-btn" type="button" aria-pressed="true" title="Tự động phân biệt: Bút S Pen ghi chú trực tiếp, ngón tay lật trang &amp; chống tì lòng bàn tay">Bút viết · Tay lật</button>
-          <button class="pen-chip-btn primary" id="pen-done-btn" type="button" title="Thu gọn thanh bút (Bút S Pen vẫn viết trực tiếp bình thường)">Thu gọn</button>
+          <div class="spen-mode-seg toolbar-mode-seg" role="radiogroup" aria-label="Chế độ S Pen">
+            <button class="spen-mode-btn active" data-spen-mode="ink" type="button" title="S Pen dùng để viết &amp; vẽ">Dùng bút</button>
+            <button class="spen-mode-btn" data-spen-mode="text" type="button" title="S Pen dùng để bôi đen tra từ &amp; nhập chữ">Nhập chữ</button>
+          </div>
         </div>
       </div>
     </div>
@@ -934,41 +988,55 @@
               <div class="slider-meta"><label for="set-para-gap">Khoảng cách đoạn</label><strong id="val-para-gap" class="tabular">0.62em</strong></div>
               <input id="set-para-gap" class="apple-range" type="range" min="0.2" max="1.5" step="0.08" value="0.62" />
             </div>
-            <div class="inset-row two-col-settings">
-              <div>
-                <div class="mini-label">Lề nhanh</div>
-                <div class="ios-segmented compact">
-                  <button class="seg-opt margin-pill" data-margin="narrow" type="button">Hẹp</button>
-                  <button class="seg-opt margin-pill" data-margin="medium" type="button">Vừa</button>
-                  <button class="seg-opt margin-pill" data-margin="wide" type="button">Rộng</button>
-                </div>
-              </div>
-              <div>
-                <div class="mini-label">Căn chữ</div>
-                <div class="ios-segmented compact">
-                  <button class="seg-opt align-pill" data-align="justify" type="button">Đều</button>
-                  <button class="seg-opt align-pill" data-align="left" type="button">Trái</button>
-                </div>
+            <div class="inset-row stack-item">
+              <div class="mini-label">Căn chữ văn bản</div>
+              <div class="ios-segmented compact">
+                <button class="seg-opt align-pill" data-align="justify" type="button">Căn đều hai bên</button>
+                <button class="seg-opt align-pill" data-align="left" type="button">Căn trái</button>
               </div>
             </div>
             <div class="inset-row stack-item margin-four-box">
-              <div class="mini-label">Chỉnh lề độc lập 4 hướng (Trên · Dưới · Trái · Phải)</div>
+              <div class="mini-label">Chỉnh lề 4 cạnh bằng số cụ thể (px)</div>
               <div class="margin-four-grid">
                 <div class="margin-side-item">
-                  <div class="slider-meta"><label for="set-margin-top">Lề trên</label><strong id="val-margin-top" class="tabular">14px</strong></div>
-                  <input id="set-margin-top" class="apple-range compact-range" type="range" min="0" max="64" step="2" value="14" />
+                  <div class="slider-meta">
+                    <label for="num-margin-top">Lề trên</label>
+                    <div class="margin-px-field">
+                      <input id="num-margin-top" class="margin-num-input tabular" type="number" min="0" max="120" step="1" value="14" aria-label="Số pixel lề trên" />
+                      <span>px</span>
+                    </div>
+                  </div>
+                  <input id="set-margin-top" class="apple-range compact-range" type="range" min="0" max="120" step="1" value="14" />
                 </div>
                 <div class="margin-side-item">
-                  <div class="slider-meta"><label for="set-margin-bottom">Lề dưới</label><strong id="val-margin-bottom" class="tabular">16px</strong></div>
-                  <input id="set-margin-bottom" class="apple-range compact-range" type="range" min="0" max="64" step="2" value="16" />
+                  <div class="slider-meta">
+                    <label for="num-margin-bottom">Lề dưới</label>
+                    <div class="margin-px-field">
+                      <input id="num-margin-bottom" class="margin-num-input tabular" type="number" min="0" max="120" step="1" value="16" aria-label="Số pixel lề dưới" />
+                      <span>px</span>
+                    </div>
+                  </div>
+                  <input id="set-margin-bottom" class="apple-range compact-range" type="range" min="0" max="120" step="1" value="16" />
                 </div>
                 <div class="margin-side-item">
-                  <div class="slider-meta"><label for="set-margin-left">Lề trái</label><strong id="val-margin-left" class="tabular">24px</strong></div>
-                  <input id="set-margin-left" class="apple-range compact-range" type="range" min="6" max="80" step="2" value="24" />
+                  <div class="slider-meta">
+                    <label for="num-margin-left">Lề trái</label>
+                    <div class="margin-px-field">
+                      <input id="num-margin-left" class="margin-num-input tabular" type="number" min="0" max="120" step="1" value="24" aria-label="Số pixel lề trái" />
+                      <span>px</span>
+                    </div>
+                  </div>
+                  <input id="set-margin-left" class="apple-range compact-range" type="range" min="0" max="120" step="1" value="24" />
                 </div>
                 <div class="margin-side-item">
-                  <div class="slider-meta"><label for="set-margin-right">Lề phải</label><strong id="val-margin-right" class="tabular">24px</strong></div>
-                  <input id="set-margin-right" class="apple-range compact-range" type="range" min="6" max="80" step="2" value="24" />
+                  <div class="slider-meta">
+                    <label for="num-margin-right">Lề phải</label>
+                    <div class="margin-px-field">
+                      <input id="num-margin-right" class="margin-num-input tabular" type="number" min="0" max="120" step="1" value="24" aria-label="Số pixel lề phải" />
+                      <span>px</span>
+                    </div>
+                  </div>
+                  <input id="set-margin-right" class="apple-range compact-range" type="range" min="0" max="120" step="1" value="24" />
                 </div>
               </div>
             </div>
@@ -1151,6 +1219,35 @@
 
   <!-- Secondary Options Popover (Decluttered Phông chữ, Cỡ khung mô tả & Tác vụ phụ) -->
   <div id="desc-secondary-popover" class="desc-secondary-popover glass-chrome hidden" role="dialog" aria-label="Tùy chọn mô tả và thông tin"></div>
+
+  <!-- Universal 360° Spectrum Color Wheel Popover (for Studio Background & Progress Bar Color Pickers) -->
+  <div id="universal-spectrum-popover" class="universal-spectrum-popover glass-chrome hidden" role="dialog" aria-label="Vòng quang phổ chọn màu">
+    <div class="univ-spec-head">
+      <strong>Vòng quang phổ màu</strong>
+      <button class="sheet-close-circle compact" id="univ-spectrum-close" type="button" aria-label="Đóng bảng chọn màu">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="spectrum-wheel-layout">
+      <div class="spectrum-canvas-wrap">
+        <canvas id="univ-spectrum-canvas" class="spectrum-wheel-canvas" width="168" height="168" aria-label="Vòng quang phổ màu"></canvas>
+        <span id="univ-spectrum-thumb" class="spectrum-wheel-thumb" aria-hidden="true"></span>
+      </div>
+      <div class="spectrum-side-controls">
+        <div class="spectrum-preview-row">
+          <span id="univ-spectrum-preview-swatch" class="spectrum-preview-swatch"></span>
+          <input id="univ-spectrum-hex-input" class="spectrum-hex-input tabular" type="text" maxlength="7" value="#0B57D0" aria-label="Mã màu Hex" />
+        </div>
+        <div class="spectrum-val-group">
+          <div class="spectrum-val-meta">
+            <label for="univ-spectrum-val">Độ sáng màu</label>
+            <span id="univ-spectrum-val-lbl" class="tabular">95%</span>
+          </div>
+          <input id="univ-spectrum-val" class="spectrum-val-slider" type="range" min="10" max="100" step="1" value="95" />
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ==================== DICTIONARY BOTTOM SHEET ==================== -->
   <div id="dict-backdrop" class="sheet-backdrop"></div>

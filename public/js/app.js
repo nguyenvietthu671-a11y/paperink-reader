@@ -303,6 +303,7 @@
           active: this.inkCanvas.active,
           detailOpen: this.inkCanvas.detailOpen,
           sPenOnly: this.inkCanvas.sPenOnly,
+          spenMode: this.inkCanvas.spenMode,
           shouldRejectTouch: this.inkCanvas.shouldRejectTouchAsPalm(),
           shouldSuppressTap: this.inkCanvas.shouldSuppressSyntheticTap(),
         }),
@@ -1667,16 +1668,10 @@
         moreMetaSel.value = metaFontId;
       }
 
-      const marginPresets = {
-        narrow: { top: 6, bottom: 8, left: 12, right: 12 },
-        medium: { top: 14, bottom: 16, left: 24, right: 24 },
-        wide: { top: 26, bottom: 28, left: 42, right: 42 },
-      };
-      const fbMargin = marginPresets[s.margin] || marginPresets.medium;
-      const mTop = typeof s.marginTop === 'number' ? Math.max(0, Math.min(64, s.marginTop)) : fbMargin.top;
-      const mBottom = typeof s.marginBottom === 'number' ? Math.max(0, Math.min(64, s.marginBottom)) : fbMargin.bottom;
-      const mLeft = typeof s.marginLeft === 'number' ? Math.max(6, Math.min(80, s.marginLeft)) : fbMargin.left;
-      const mRight = typeof s.marginRight === 'number' ? Math.max(6, Math.min(80, s.marginRight)) : fbMargin.right;
+      const mTop = typeof s.marginTop === 'number' ? Math.max(0, Math.min(120, Math.round(s.marginTop))) : 14;
+      const mBottom = typeof s.marginBottom === 'number' ? Math.max(0, Math.min(120, Math.round(s.marginBottom))) : 16;
+      const mLeft = typeof s.marginLeft === 'number' ? Math.max(0, Math.min(120, Math.round(s.marginLeft))) : 24;
+      const mRight = typeof s.marginRight === 'number' ? Math.max(0, Math.min(120, Math.round(s.marginRight))) : 24;
 
       root.style.setProperty('--reader-pad-top', `${mTop}px`);
       root.style.setProperty('--reader-pad-bottom', `${mBottom}px`);
@@ -1762,6 +1757,56 @@
       if (authors.length) extra += ` Các tác giả tiêu biểu: ${authors.join(', ')}.`;
       if (titles.length) extra += ` Một số tựa sách đáng chú ý: "${titles.join('", "')}".`;
       return base + extra;
+    }
+
+    closeUniversalSpectrumPopover() {
+      const pop = document.getElementById('universal-spectrum-popover');
+      if (pop) pop.classList.add('hidden');
+      this._univSpectrumAnchor = null;
+      this._univSpectrumOnColor = null;
+    }
+
+    openUniversalSpectrumPopover(anchorEl, initialHex, onColorChange) {
+      const pop = document.getElementById('universal-spectrum-popover');
+      if (!pop || !anchorEl || !window.PaperInkSpectrumWheel) return;
+
+      if (!pop.classList.contains('hidden') && this._univSpectrumAnchor === anchorEl) {
+        this.closeUniversalSpectrumPopover();
+        return;
+      }
+      this.closeUniversalSpectrumPopover();
+      this._univSpectrumAnchor = anchorEl;
+      this._univSpectrumOnColor = onColorChange;
+
+      if (!this._univSpectrumInstance) {
+        this._univSpectrumInstance = new window.PaperInkSpectrumWheel({
+          canvas: document.getElementById('univ-spectrum-canvas'),
+          thumb: document.getElementById('univ-spectrum-thumb'),
+          valSlider: document.getElementById('univ-spectrum-val'),
+          valLabel: document.getElementById('univ-spectrum-val-lbl'),
+          previewSwatch: document.getElementById('univ-spectrum-preview-swatch'),
+          hexInput: document.getElementById('univ-spectrum-hex-input'),
+          onChange: (hex) => {
+            this._univSpectrumOnColor?.(hex);
+          },
+        });
+      }
+
+      pop.classList.remove('hidden');
+      requestAnimationFrame(() => {
+        this._univSpectrumInstance.setHex(initialHex || '#0B57D0', true);
+        const aRect = anchorEl.getBoundingClientRect();
+        const pRect = pop.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let left = Math.round(aRect.left);
+        left = Math.max(12, Math.min(vw - pRect.width - 12, left));
+        let top = Math.round(aRect.top - pRect.height - 8);
+        if (top < 12) top = Math.round(aRect.bottom + 8);
+        top = Math.max(12, Math.min(vh - pRect.height - 12, top));
+        pop.style.left = `${left}px`;
+        pop.style.top = `${top}px`;
+      });
     }
 
     closeDescSecondaryPopover() {
@@ -2212,9 +2257,6 @@
           .join('');
       }
 
-      document.querySelectorAll('.margin-pill').forEach((el) => {
-        el.classList.toggle('active', el.dataset.margin === s.margin);
-      });
       document.querySelectorAll('.align-pill').forEach((el) => {
         el.classList.toggle('active', el.dataset.align === s.textAlign);
       });
@@ -2310,16 +2352,17 @@
       setVal('set-letter-spacing', Number(s.letterSpacing || 0).toFixed(2), 'val-letter-spacing', 'em');
       setVal('set-word-spacing', Number(s.wordSpacing || 0).toFixed(2), 'val-word-spacing', 'em');
       setVal('set-para-gap', Number(s.paraGap ?? 0.62).toFixed(2), 'val-para-gap', 'em');
-      const mPresetFb =
-        s.margin === 'narrow'
-          ? { top: 6, bottom: 8, left: 12, right: 12 }
-          : s.margin === 'wide'
-          ? { top: 26, bottom: 28, left: 42, right: 42 }
-          : { top: 14, bottom: 16, left: 24, right: 24 };
-      setVal('set-margin-top', typeof s.marginTop === 'number' ? s.marginTop : mPresetFb.top, 'val-margin-top', 'px');
-      setVal('set-margin-bottom', typeof s.marginBottom === 'number' ? s.marginBottom : mPresetFb.bottom, 'val-margin-bottom', 'px');
-      setVal('set-margin-left', typeof s.marginLeft === 'number' ? s.marginLeft : mPresetFb.left, 'val-margin-left', 'px');
-      setVal('set-margin-right', typeof s.marginRight === 'number' ? s.marginRight : mPresetFb.right, 'val-margin-right', 'px');
+      const syncMarginPair = (rangeId, numId, rawVal, fallback) => {
+        const v = typeof rawVal === 'number' && !Number.isNaN(rawVal) ? Math.max(0, Math.min(120, Math.round(rawVal))) : fallback;
+        const rEl = document.getElementById(rangeId);
+        if (rEl) rEl.value = String(v);
+        const nEl = document.getElementById(numId);
+        if (nEl && document.activeElement !== nEl) nEl.value = String(v);
+      };
+      syncMarginPair('set-margin-top', 'num-margin-top', s.marginTop, 14);
+      syncMarginPair('set-margin-bottom', 'num-margin-bottom', s.marginBottom, 16);
+      syncMarginPair('set-margin-left', 'num-margin-left', s.marginLeft, 24);
+      syncMarginPair('set-margin-right', 'num-margin-right', s.marginRight, 24);
       setVal('set-extra-dim', s.extraDim, 'val-extra-dim', '%');
       setVal('set-warmth', s.warmth, 'val-warmth', '%');
 
@@ -6657,6 +6700,7 @@
 
     closeAllSheets() {
       this.closeDescSecondaryPopover();
+      this.closeUniversalSpectrumPopover();
       const studioWasOpen = Boolean(document.getElementById('studio-sheet')?.classList.contains('open'));
       document
         .querySelectorAll('.sheet-panel.open, .sheet-backdrop.open, .modal-panel.open')
@@ -6715,7 +6759,32 @@
         this.openDescSecondaryPopover(e.currentTarget);
       });
 
+      document.getElementById('univ-spectrum-close')?.addEventListener('click', () => {
+        this.closeUniversalSpectrumPopover();
+      });
+
       document.addEventListener('click', (e) => {
+        const rainbowLbl = e.target.closest('.rainbow-picker-wrap');
+        if (rainbowLbl) {
+          const inp = rainbowLbl.querySelector('input[type="color"]');
+          if (inp && window.PaperInkSpectrumWheel) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.openUniversalSpectrumPopover(rainbowLbl, inp.value || '#0B57D0', (hex) => {
+              inp.value = hex;
+              inp.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            return;
+          }
+        }
+        if (
+          !e.target.closest('#universal-spectrum-popover') &&
+          !e.target.closest('.rainbow-picker-wrap') &&
+          !document.getElementById('universal-spectrum-popover')?.classList.contains('hidden')
+        ) {
+          this.closeUniversalSpectrumPopover();
+        }
+
         const descMenuTrigger = e.target.closest('[data-open-desc-menu]');
         if (descMenuTrigger) {
           e.preventDefault();
@@ -7782,18 +7851,6 @@
           this.updateSettings({ headingFont: headingFontBtn.dataset.headingFont });
           return;
         }
-        const marginBtn = e.target.closest('.margin-pill');
-        if (marginBtn) {
-          const preset = marginBtn.dataset.margin || 'medium';
-          const presetVals =
-            preset === 'narrow'
-              ? { marginTop: 6, marginBottom: 8, marginLeft: 12, marginRight: 12 }
-              : preset === 'wide'
-              ? { marginTop: 26, marginBottom: 28, marginLeft: 42, marginRight: 42 }
-              : { marginTop: 14, marginBottom: 16, marginLeft: 24, marginRight: 24 };
-          this.updateSettings({ margin: preset, ...presetVals });
-          return;
-        }
         const alignBtn = e.target.closest('.align-pill');
         if (alignBtn) {
           this.updateSettings({ textAlign: alignBtn.dataset.align });
@@ -7860,16 +7917,30 @@
       bindRange('set-extra-dim', 'extraDim', false);
       bindRange('set-warmth', 'warmth', false);
 
-      const bindMarginSide = (id, key) => {
-        const el = document.getElementById(id);
-        el?.addEventListener('input', () => {
-          this.updateSettings({ margin: 'custom', [key]: parseInt(el.value, 10) });
+      const bindMarginSide = (rangeId, numId, key) => {
+        const rEl = document.getElementById(rangeId);
+        const nEl = document.getElementById(numId);
+        rEl?.addEventListener('input', () => {
+          const v = Math.max(0, Math.min(120, parseInt(rEl.value, 10) || 0));
+          if (nEl) nEl.value = String(v);
+          this.updateSettings({ margin: 'custom', [key]: v });
         });
+        const applyNum = (clampEmpty) => {
+          const raw = (nEl?.value ?? '').trim();
+          if (raw === '' && !clampEmpty) return;
+          const parsed = parseInt(raw, 10);
+          const v = Number.isNaN(parsed) ? 0 : Math.max(0, Math.min(120, parsed));
+          if (clampEmpty && nEl) nEl.value = String(v);
+          if (rEl) rEl.value = String(v);
+          this.updateSettings({ margin: 'custom', [key]: v });
+        };
+        nEl?.addEventListener('input', () => applyNum(false));
+        nEl?.addEventListener('change', () => applyNum(true));
       };
-      bindMarginSide('set-margin-top', 'marginTop');
-      bindMarginSide('set-margin-bottom', 'marginBottom');
-      bindMarginSide('set-margin-left', 'marginLeft');
-      bindMarginSide('set-margin-right', 'marginRight');
+      bindMarginSide('set-margin-top', 'num-margin-top', 'marginTop');
+      bindMarginSide('set-margin-bottom', 'num-margin-bottom', 'marginBottom');
+      bindMarginSide('set-margin-left', 'num-margin-left', 'marginLeft');
+      bindMarginSide('set-margin-right', 'num-margin-right', 'marginRight');
 
       // Drag & Drop .EPUB anywhere onto Library!
       const dropOverlay = document.getElementById('epub-drop-overlay');
