@@ -1002,8 +1002,8 @@
       }
 
       const rect = this.maskEl.getBoundingClientRect();
-      this.pageW = Math.max(200, Math.floor(rect.width));
-      this.pageH = Math.max(200, Math.floor(rect.height));
+      this.pageW = Math.max(200, Math.floor(this.maskEl.clientWidth || rect.width));
+      this.pageH = Math.max(200, Math.floor(this.maskEl.clientHeight || rect.height));
       this.pageGap = 40;
 
       this.contentEl.classList.add('no-turn-anim');
@@ -1054,8 +1054,8 @@
       const targetPage = canStepInChapter ? (dir === 'next' ? this.currentPage + 1 : this.currentPage - 1) : null;
 
       const stageRect = this.stageEl.getBoundingClientRect();
-      const stageW = Math.max(1, stageRect.width);
-      const stageH = Math.max(1, stageRect.height);
+      const stageW = Math.max(1, this.stageEl.clientWidth || stageRect.width);
+      const stageH = Math.max(1, this.stageEl.clientHeight || stageRect.height);
       const extraTop = Math.round(stageH * 0.18);
       const tallH = stageH + extraTop * 2;
 
@@ -1084,10 +1084,10 @@
 
       if (effect === 'curl' && this.curlStage && this.curlTopSheet) {
         const maskRect = this.maskEl.getBoundingClientRect();
-        const padLeft = Math.max(0, maskRect.left - stageRect.left);
-        const padTop = Math.max(0, maskRect.top - stageRect.top);
-        const maskW = Math.max(1, maskRect.width);
-        const maskH = Math.max(1, maskRect.height);
+        const padLeft = Math.max(0, this.maskEl.offsetLeft || maskRect.left - stageRect.left);
+        const padTop = Math.max(0, this.maskEl.offsetTop || maskRect.top - stageRect.top);
+        const maskW = Math.max(1, this.maskEl.clientWidth || maskRect.width);
+        const maskH = Math.max(1, this.maskEl.clientHeight || maskRect.height);
 
         const buildPageMask = (pageIdx, boundaryText = '') => {
           const innerMask = document.createElement('div');

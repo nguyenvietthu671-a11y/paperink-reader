@@ -24,38 +24,109 @@
     return !t || t === 'unknown' || t === 'unknown author' || t === 'anonymous' || t === 'n/a' || t === 'none';
   }
 
+  const NON_AUTHOR_CORP_RE =
+    /\b(overdrive|inc\.?|llc|ltd\.?|corp\.?|publishing|publishers|publisher|imprint|penguin|random house|harpercollins|simon\s*&\s*schuster|macmillan|hachette|kensington|ballantine|flatiron|quill|calibre|epublibre|z-library|z-lib|oceanofpdf|anna[’']?s archive|gutenberg|amazon|audible)\b/i;
+
+  const NON_AUTHOR_ROLE_RE =
+    /\((?:translator|translation|translated by|narrator|editor|edited by|illustrator|illustrated by|foreword|introduction|afterword|compiler|biên dịch|người dịch|dịch giả|biên tập|minh họa)[^)]*\)/i;
+
   function normalizeSingleAuthor(raw) {
-    let n = decodeEntities(String(raw || ''))
+    let s = decodeEntities(String(raw || '')).trim();
+    if (!s) return '';
+    // Skip pure translator/editor/illustrator credits when tagged in parens
+    if (NON_AUTHOR_ROLE_RE.test(s)) {
+      const strippedRole = s.replace(NON_AUTHOR_ROLE_RE, '').trim();
+      // If original raw string explicitly marked THIS person as translator/editor (e.g. "Slin Jung (translator)"), drop them!
+      if (/\((?:translator|translation|translated by|narrator|illustrator|biên dịch|người dịch|dịch giả)/i.test(s)) {
+        return '';
+      }
+      s = strippedRole;
+    }
+    if (NON_AUTHOR_CORP_RE.test(s)) return '';
+
+    let n = s
+      .replace(/\[[^\]]*\]/g, ' ') // Strip Anna's Archive "[Hanff, Helene]" duplicate bracket
       .replace(/^\s*by\s+/i, '')
-      .replace(/\s*\((?:author|translator|editor|illustrator|biên dịch|dịch giả)\)\s*/gi, '')
+      .replace(/\s*\((?:author|tác giả)\)\s*/gi, '')
+      .replace(/\s+etc\.?$/i, '')
+      // Convert underscore initials like "S_ A_ Cosby" or "Noelle W_ Ihli" -> "S. A. Cosby", "Noelle W. Ihli"
+      .replace(/\b([A-Z])_(?=\s|$|[A-Z]_)/g, '$1.')
+      .replace(/_/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    if (!n) return '';
-    // Flip "Last, First" -> "First Last" when there is exactly one comma and no corporate suffixes
+    if (!n || NON_AUTHOR_CORP_RE.test(n)) return '';
+
+    // Flip "Last, First" -> "First Last" when there is exactly one comma and no suffixes
     if (/^[^,]{2,34},\s*[^,]{2,34}$/.test(n) && !/\b(jr\.?|sr\.?|iii|ii|phd|md|inc\.?|ltd\.?)\b/i.test(n)) {
-      const [last, first] = n.split(',').map((s) => s.trim());
+      const [last, first] = n.split(',').map((x) => x.trim());
       if (first && last && !/\d/.test(first) && !/\d/.test(last)) {
         n = `${first} ${last}`;
       }
     }
-    // Normalize initials like "C.J. Sansom" -> "C. J. Sansom"
+    // Expand compact two-letter uppercase initials at start of name: "AR Torre" -> "A. R. Torre", "JD Barker" -> "J. D. Barker"
+    n = n.replace(/^([A-Z])([A-Z])\s+([A-Z][a-z]{2,})\b/, '$1. $2. $3');
+    // Normalize dotted initials like "C.J. Sansom" or "S.A. Cosby" -> "C. J. Sansom"
     n = n.replace(/\b([A-Z])\.([A-Z])\./g, '$1. $2.');
-    return n.trim();
+    n = n.replace(/\b([A-Z])\.([A-Z])\b(?!\.)/g, '$1. $2.');
+    n = n.replace(/\s+/g, ' ').trim();
+    if (n.length < 2 || /^\d+$/.test(n)) return '';
+    return n;
   }
 
   function normalizeAuthor(raw) {
     if (!raw) return '';
-    const arr = Array.isArray(raw) ? raw : String(raw).split(/\s*(?:;|&\s+(?=[A-Z])|\band\b(?=\s+[A-Z]))\s*/);
+    const items = Array.isArray(raw) ? raw : [String(raw)];
+    const parts = [];
+    for (const item of items) {
+      const str = decodeEntities(String(item || ''))
+        .replace(/\[[^\]]*\]/g, ' ')
+        .trim();
+      if (!str) continue;
+      // Split multi-author strings carefully:
+      // Split on ";", "&", " and ", OR ", " when NOT a single "Last, First" pair!
+      const semiSplit = str.split(/\s*(?:;|&\s+(?=[A-Z])|\band\b(?=\s+[A-Z]))\s*/);
+      for (const chunk of semiSplit) {
+        const commaCount = (chunk.match(/,/g) || []).length;
+        if (commaCount >= 2) {
+          // e.g. "Lee Onhwa, Slin Jung (translator), ..."
+          parts.push(...chunk.split(',').map((x) => x.trim()).filter(Boolean));
+        } else if (commaCount === 1) {
+          const [a, b] = chunk.split(',').map((x) => x.trim());
+          // Check if "First1 Last1, First2 Last2" (both sides have spaces or role parens!) vs "Last, First"
+          if (
+            NON_AUTHOR_ROLE_RE.test(b) ||
+            NON_AUTHOR_CORP_RE.test(b) ||
+            a.toLowerCase() === b.toLowerCase() ||
+            (a.includes(' ') && b.includes(' ') && !/^[A-Z]\.\s*[A-Z]\.$/.test(b))
+          ) {
+            parts.push(a, b);
+          } else {
+            parts.push(chunk);
+          }
+        } else {
+          parts.push(chunk);
+        }
+      }
+    }
+
     const out = [];
     const seen = new Set();
-    for (const part of arr) {
+    for (const part of parts) {
       const clean = normalizeSingleAuthor(part);
       if (clean && !isUnknownAuthor(clean)) {
-        const key = clean.toLowerCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-          out.push(clean);
-        }
+        const key = clean.toLowerCase().replace(/[^a-z0-9\u00c0-\u1eff]/g, '');
+        if (!key || seen.has(key)) continue;
+        // Deduplicate pseudonym/initial variant in same credit like "A. R. Torre, Alessandra Torre"
+        const tokens = clean.split(/\s+/);
+        const lastTok = tokens[tokens.length - 1]?.toLowerCase();
+        const firstInit = tokens[0]?.charAt(0)?.toLowerCase();
+        const dupIdx = out.findIndex((existing) => {
+          const et = existing.split(/\s+/);
+          return et[et.length - 1]?.toLowerCase() === lastTok && et[0]?.charAt(0)?.toLowerCase() === firstInit;
+        });
+        if (dupIdx !== -1) continue;
+        seen.add(key);
+        out.push(clean);
       }
     }
     return out.join(', ');
@@ -151,14 +222,22 @@
       .replace(/\s*\((?:unabridged|abridged|illustrated|annotated)\)\s*/gi, ' ')
       .replace(/\s*:\s*(?:summary|book analysis|conversation starters|study guide).*$/i, '')
       .replace(/\s+\bby\s+[A-Z][\w\s.'-]+$/i, '')
-      .replace(/^(?:an?\s+)(?=[A-Z0-9])/i, '')
+      .replace(/^(?:an?\s+|tales\s+of\s+(?:the\s+)?)(?=[A-Z0-9])/i, '')
       .replace(/\s*(?:crime\s+thriller|psychological\s+thriller|detective\s+series|mystery\s+series|thriller\s+series)\s*$/i, '')
-      .replace(/\s*(?:series|trilogy|saga|chronicles?|novels?|books?|mysteries|investigations?|adventures?|files|cases)\s*$/i, (m) =>
-        /trilogy|saga|chronicles?/i.test(m) ? m : ''
-      )
-      .replace(/^(.{4,}?)\s+(?:mystery|thriller)\s*$/i, (_, baseName) =>
-        /^[A-Z0-9]{2,4}$/.test(baseName.trim()) ? `${baseName.trim()} Thriller` : baseName
-      )
+      // Do NOT strip "Mysteries" / "Guide" if preceded by possessive "'s" (e.g. "Antique Hunter's Mysteries")!
+      .replace(/(.+?)\s+(series|trilogy|saga|chronicles?|novels?|books?|mysteries|investigations?|adventures?|files|cases)\s*$/i, (full, prefix, suffix) => {
+        if (/trilogy|saga|chronicles?|sequence/i.test(suffix)) return full.trim();
+        if (/[’']s$/i.test(prefix.trim()) && /mysteries|adventures?|investigations?|cases|files/i.test(suffix)) {
+          return `${prefix.trim()} ${suffix.charAt(0).toUpperCase()}${suffix.slice(1).toLowerCase()}`;
+        }
+        return prefix.trim();
+      })
+      .replace(/^(.{4,}?)\s+(?:mystery|thriller)\s*$/i, (full, baseName) => {
+        if (/[’']s$/i.test(baseName.trim())) return full.trim();
+        return /^[A-Z0-9]{2,4}$/.test(baseName.trim()) ? `${baseName.trim()} Thriller` : baseName;
+      })
+      // Fix dangling possessive "'s" if source already lacked the trailing noun (e.g. "Antique Hunter's" -> "Antique Hunter's Mysteries")
+      .replace(/^(.*?\bHunter)[’']s$/i, "$1's Mysteries")
       .replace(/\s*(?:tập|quyển|phần|vol\.?|volume|part|bk\.?)\s*$/i, '')
       .replace(/^[\s\-–—:,#•_]+|[\s\-–—:,#•_]+$/g, '')
       .replace(/\s+/g, ' ')
@@ -169,7 +248,7 @@
     }
     if (!s || s.length < 2 || s.length > 68 || /^\d+$/.test(s)) return '';
     if (
-      /^(edition|first edition|version|unabridged|abridged|illustrated|annotated|retail|epub|pdf|kindle|z-lib|z-library|oceanofpdf|calibre|none|novel|a novel|a thriller|a mystery|short story|tập|quyển|phần|book|vol\.?|volume|part|bestseller|new york times)$/i.test(
+      /^(edition|first edition|version|unabridged|abridged|illustrated|annotated|retail|epub|pdf|kindle|z-lib|z-library|oceanofpdf|calibre|none|novel|a novel|a thriller|a mystery|short story|tập|quyển|phần|book|vol\.?|volume|part|bestseller|new york times|standalone)$/i.test(
         s
       )
     ) {
@@ -202,6 +281,8 @@
         .replace(/^_?OceanofPDF\.com_/i, '')
         .replace(/\s*\((?:z-library|z-lib|1lib)[^)]*\)/gi, '')
         .replace(/\s*--\s*Anna[’']?s Archive.*$/i, '')
+        // Strip Windows duplicate "(1)", "(2)" right before author paren or end of filename
+        .replace(/\s*\(\d\)(?=\s*\([^()]+\)\s*$|\s*$)/g, '')
         .replace(/_/g, ' ')
         .trim();
 
@@ -218,7 +299,6 @@
         if (m) {
           const cand = cleanSeriesName(m[1], author);
           const idx = parseFloat(m[2]);
-          // Avoid false positive years like "(1984)" or "(2023)" unless explicitly prefixed with #/Book
           const hasExplicitWord = /(?:#|book|bk|vol|part|tập|quyển|phần)\s*\d/i.test(inner);
           if (cand && !Number.isNaN(idx) && idx >= 0 && (idx < 500 || hasExplicitWord) && !(idx >= 1800 && idx <= 2099 && !hasExplicitWord)) {
             series = cand;
@@ -237,6 +317,21 @@
     const cleanedFileSource = stripNoiseFromFile(fileName);
     tryParen(cleanedFileSource.split(' -- ')[0], false);
 
+    // Pattern: "Outsiders Sequence 2: The Other" or "[Series] Book 3: Title"
+    if (!series && cleanTitle) {
+      const prefixSeqRe = /^([A-Z][\w\s'&.-]{2,44}?\s+(?:Sequence|Chronicles?|Trilogy|Saga|Cycle|Files))\s+#?(\d+(?:\.\d+)?)\s*[:\-–—]\s*(.{2,80})$/i;
+      const mPref = cleanTitle.match(prefixSeqRe);
+      if (mPref) {
+        const cand = cleanSeriesName(mPref[1], author);
+        const idx = parseFloat(mPref[2]);
+        if (cand && !Number.isNaN(idx) && idx < 500) {
+          series = cand;
+          seriesIndex = idx;
+          cleanTitle = mPref[3].trim();
+        }
+      }
+    }
+
     // Pattern: "Title: Series Name, Book 4" or "Title _ Gabriel Allon Series, Book 4" or "Title - Detective Erika Foster 5"
     if (!series && cleanTitle) {
       const colonSubRe =
@@ -254,10 +349,10 @@
       }
     }
 
-    // Pattern: "(A Sherlock Holmes Novel)" or ": A Jack Reacher Novel" in title (guarded against Author Name!)
+    // Pattern: "(A Sherlock Holmes Novel)", ": A Jack Reacher Novel", ": A Tales of the Sun Eater"
     if (!series && cleanTitle) {
       const novelOfRe =
-        /(?:\s*[\(\[]\s*|\s*[:\-–—_]\s*)(?:an?\s+)?([A-Z0-9][\w\s'&.-]{2,44}?)\s+(?:novel|mystery|mysteries|thriller|adventure|story|case|chronicle|trilogy)\s*[\)\]]?$/i;
+        /(?:\s*[\(\[]\s*|\s*[:\-–—_]\s*)(?:(?:an?|the)\s+)?(?:tales?\s+of\s+(?:the\s+)?)?([A-Z0-9][\w\s'&.-]{2,44}?)\s+(?:novel|novella|mystery|mysteries|thriller|adventure|story|stories|case|chronicle|trilogy)\s*[\)\]]?$/i;
       const m = cleanTitle.match(novelOfRe);
       if (m) {
         const cand = cleanSeriesName(m[1], author);
@@ -265,6 +360,17 @@
           series = cand;
           const stripped = cleanTitle.slice(0, m.index).replace(/\s+/g, ' ').trim();
           if (stripped.length >= 2) cleanTitle = stripped;
+        }
+      } else {
+        const talesOnlyRe = /\s*[:\-–—_]\s*(?:an?\s+)?tales?\s+of\s+(?:the\s+)?([A-Z0-9][\w\s'&.-]{2,40})$/i;
+        const mt = cleanTitle.match(talesOnlyRe);
+        if (mt) {
+          const cand = cleanSeriesName(mt[1], author);
+          if (cand) {
+            series = cand;
+            const stripped = cleanTitle.slice(0, mt.index).replace(/\s+/g, ' ').trim();
+            if (stripped.length >= 2) cleanTitle = stripped;
+          }
         }
       }
     }
@@ -283,21 +389,21 @@
       }
     }
 
-    // Pattern in description: "Book One of the Kingkiller Chronicle", "first in the 4MK Thriller series"
+    // Pattern in description: "Book One of the Kingkiller Chronicle", "first in the 4MK Thriller series", "sixth novel of the ... Sun Eater series"
     if (!series && description) {
       const descPatterns = [
         {
-          re: /\b(?:book|volume|novel|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?)\s+(?:series|trilogy|saga|quartet|cycle)\b/i,
+          re: /\b(?:book|volume|novel|novella|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?(?:[a-z]+[- ][a-z]+\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?)\s+(?:series|trilogy|saga|quartet|cycle|sequence)\b/i,
           idxGroup: 1,
           serGroup: 2,
         },
         {
-          re: /\b(?:book|volume|novel|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?\s+chronicles?)\b/i,
+          re: /\b(?:book|volume|novel|novella|installment|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:of|in)\s+(?:the\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?\s+chronicles?)\b/i,
           idxGroup: 1,
           serGroup: 2,
         },
         {
-          re: /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+(?:st|nd|rd|th))\s+(?:(?:book|novel|installment|thriller|mystery)\s+)?in\s+(?:the\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?)\s+(?:series|trilogy|saga|mysteries|mystery|thriller)\b/i,
+          re: /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|\d+(?:st|nd|rd|th))\s+(?:(?:book|novel|novella|installment|thriller|mystery)\s+)?(?:in|of)\s+(?:the\s+)?(?:[a-z]+[- ][a-z]+\s+)?([A-Z0-9][A-Za-z0-9'\s&-]{2,48}?)\s+(?:series|trilogy|saga|sequence|mysteries|mystery|thriller)\b/i,
           idxGroup: 1,
           serGroup: 2,
         },
@@ -319,13 +425,20 @@
     // Index fallback from filename/title if series already known
     if (series && seriesIndex == null) {
       const idxMatch = `${cleanedFileSource} ${title}`.match(
-        /(?:#|book\s+|bk\.?\s*|vol\.?\s*|tập\s+|quyển\s+|\(\s*)(\d+(?:\.\d+)?)\b/i
+        /(?:#|book\s+|bk\.?\s*|vol\.?\s*|tập\s+|quyển\s+)(\d+(?:\.\d+)?)\b/i
       );
       if (idxMatch) {
         const n = parseFloat(idxMatch[1]);
         if (!Number.isNaN(n) && n >= 0 && n < 500) seriesIndex = n;
       }
     }
+
+    // Clean leftover subtitle noise from title (e.g. ": A Novel", "_ A Novel", "(Previously Published As ...)")
+    cleanTitle = cleanTitle
+      .replace(/\s*[_:]\s*A\s+(?:Novel|Thriller|Mystery|Psychological\s+Thriller|Domestic\s+Thriller)\s*$/i, '')
+      .replace(/\s*\(Previously\s+Published\s+As\b[^)]*$/i, '')
+      .replace(/\s*\(\d\)\s*$/, '')
+      .trim();
 
     return { cleanTitle: cleanTitle || title, series, seriesIndex };
   }
@@ -522,159 +635,221 @@
     };
   }
 
-  // Bilingual Genre & Smart Tag Taxonomy Rules
+  // Bilingual Genre & Smart Tag Taxonomy Rules (Precision-guarded against thriller blurb metaphors)
   const GENRE_RULES = [
     {
       genre: 'Mystery & Detective',
       tag: 'Trinh thám',
-      re: /\b(detective|murder|killer|homicide|police|inspector|crime|fbi|forensic|whodunit|sherlock|poirot|sleuth|investigation|mystery|clue|suspect)\b|trinh thám|án mạng|phá án|vụ án|kỳ án|thám tử|hung thủ|tội phạm/i,
+      re: /\b(detective|murder|killer|homicide|police|inspector|crime|fbi|forensic|whodunit|sherlock|poirot|sleuth|investigation|mystery|mysteries|private investigator|cold case|serial killer|suspect)\b|trinh thám|án mạng|phá án|vụ án|kỳ án|thám tử|hung thủ|tội phạm/i,
     },
     {
       genre: 'Thriller & Suspense',
       tag: 'Giật gân',
-      re: /\b(thriller|suspense|espionage|spy|cia|mossad|assassin|conspiracy|hostage|kidnap|revenge|chase|psychological thriller|manhunt)\b|giật gân|ly kỳ|điệp viên|âm mưu|hồi hộp|sát thủ/i,
+      re: /\b(thriller|thrillers|suspense|espionage|spy|cia|mossad|mi6|assassin|conspiracy|hostage|kidnap|kidnapped|abduction|manhunt|domestic noir|psychological thriller|psychological suspense|legal thriller)\b|giật gân|ly kỳ|điệp viên|âm mưu|hồi hộp|sát thủ/i,
     },
     {
       genre: 'Sci-Fi',
       tag: 'Khoa học VT',
-      re: /\b(sci-fi|science fiction|cyberpunk|dystopia|dystopian|space opera|spaceship|galaxy|alien|mars|android|robot|time travel|ai|quantum|future world)\b|khoa học viễn tưởng|viễn tưởng|vũ trụ|hành tinh|tương lai/i,
+      re: /\b(sci-fi|science fiction|cyberpunk|dystopia|dystopian|post-apocalyptic|apocalyptic|space opera|spaceship|interstellar|galaxy|alien|aliens|mars|android|time travel|quantum|speculative fiction)\b|khoa học viễn tưởng|viễn tưởng|vũ trụ|hành tinh|hậu tận thế|tương lai/i,
     },
     {
       genre: 'Fantasy',
       tag: 'Kỳ ảo',
-      re: /\b(fantasy|magic|dragon|witch|wizard|sorcerer|kingdom|spell|elf|elves|dwarf|quest|sword|prophecy|fae|vampire|werewolf|necromancer)\b|kỳ ảo|ma thuật|phép thuật|rồng|vương quốc|tiên hiệp|kiếm hiệp|huyền huyễn|dị giới|tu tiên|tu chân|đấu khí|thương khung|xuyên không|trùng sinh/i,
+      re: /\b(fantasy|magical realism|magic|dragon|dragons|witch|witches|wizard|sorcerer|spell|elf|elves|fae|faerie|vampire|werewolf|necromancer|fairytale retelling|mythological|mythology)\b|kỳ ảo|ma thuật|phép thuật|rồng|vương quốc|tiên hiệp|kiếm hiệp|huyền huyễn|dị giới|tu tiên|tu chân|đấu khí|thương khung|xuyên không|trùng sinh/i,
     },
     {
       genre: 'Romance',
       tag: 'Tình cảm',
-      re: /\b(romance|romantic|love story|heartbreak|wedding|bride|soulmate|kiss|passion|billionaire|enemies to lovers)\b|ngôn tình|tình cảm|lãng mạn|tình yêu|hôn nhân/i,
+      re: /\b(romance|romantic comedy|rom-com|love story|soulmate|enemies to lovers|second chance romance|contemporary romance|small town romance)\b|ngôn tình|tình cảm|lãng mạn|chuyện tình/i,
     },
     {
       genre: 'Horror',
       tag: 'Kinh dị',
-      re: /\b(horror|ghost|haunted|demon|curse|supernatural|nightmare|terror|macabre|zombie|gothic horror)\b|kinh dị|ma quái|ám ảnh|rùng rợn|linh dị/i,
+      re: /\b(horror|ghost story|exorcism|demonic|possession|supernatural horror|gothic horror|slasher|macabre|zombie|zombies|occult|lovecraft|lovecraftian|haunted house|paranormal horror)\b|kinh dị|ma quái|trừ tà|ác quỷ|linh dị/i,
     },
     {
       genre: 'Historical Fiction',
       tag: 'Lịch sử',
-      re: /\b(historical|victorian|medieval|world war|wwii|wwi|century|empire|dynasty|tudor|regency|ancient rome|samurai|revolution)\b|lịch sử|chiến tranh|triều đại|cổ đại|thế kỷ/i,
+      re: /\b(historical fiction|historical mystery|tudor|victorian|medieval|world war|wwii|wwi|16th century|17th century|18th century|19th century|regency|ancient rome|samurai|blitzkrieg|nazi)\b|tiểu thuyết lịch sử|lịch sử|triều đại|cổ đại/i,
     },
     {
-      genre: 'Classic Literature',
-      tag: 'Kinh điển',
-      re: /\b(classic|classics|literary fiction|19th century|18th century|gutenberg|public domain|masterpiece|dostoevsky|tolstoy|austen|dickens|shakespeare|hemingway|orwell|kafka|murakami)\b|kinh điển|văn học cổ điển|kiệt tác/i,
+      genre: 'Classic & Literary Fiction',
+      tag: 'Văn học · Chữa lành',
+      re: /\b(classic literature|classics|literary fiction|contemporary fiction|healing fiction|bookshop|pastry shop|convenience store|mind laundry|gutenberg|masterpiece|dostoevsky|tolstoy|austen|dickens|shakespeare|hemingway|orwell|kafka|murakami)\b|kinh điển|văn học cổ điển|kiệt tác|văn học đương đại|chữa lành/i,
     },
     {
       genre: 'Business & Finance',
       tag: 'Kinh doanh',
-      re: /\b(business|finance|investing|investment|startup|entrepreneur|economics|economy|marketing|management|leadership|wealth|money|stock market|strategy)\b|kinh doanh|tài chính|đầu tư|khởi nghiệp|kinh tế|quản trị|lãnh đạo|tiền bạc/i,
+      re: /\b(business\s*&\s*economics|corporate finance|investing|stock market|entrepreneur|entrepreneurship|venture capital|macroeconomics|microeconomics|marketing strategy|business management)\b|kinh doanh|tài chính|đầu tư|khởi nghiệp|kinh tế học|quản trị doanh nghiệp/i,
     },
     {
       genre: 'Self-Help & Productivity',
       tag: 'Phát triển bản thân',
-      re: /\b(self-help|self help|habit|habits|productivity|mindfulness|success|motivation|atomic|focus|discipline|personal growth|communication|time management)\b|kỹ năng sống|phát triển bản thân|thói quen|hiệu suất|thành công|tư duy|tự lực/i,
+      re: /\b(self-help|self help|personal growth|habit formation|atomic habits|productivity|mindfulness|time management|self-improvement)\b|kỹ năng sống|phát triển bản thân|rèn luyện thói quen|hiệu suất|tự lực/i,
     },
     {
       genre: 'Psychology & Philosophy',
       tag: 'Tâm lý · Triết học',
-      re: /\b(psychology|psychological|philosophy|stoicism|stoic|cognitive|neuroscience|behavioral|brain|consciousness|existential|ethics|meditations|freud|jung)\b|tâm lý học|tâm lý|triết học|nhận thức|não bộ|khắc kỷ|chủ nghĩa/i,
+      re: /\b(philosophy|stoicism|stoic|cognitive psychology|neuroscience|behavioral science|attachment theory|existentialism|metaphysics|epistemology|plato|socrates|aristotle|nietzsche|meditations|freud|jung)\b|tâm lý học|triết học|nhận thức luận|chủ nghĩa khắc kỷ/i,
+      excludeIf: /\b(thriller|murder|serial killer|detective|homicide|inspector|domestic noir|crime fiction)\b/i,
+    },
+    {
+      genre: 'History & Society',
+      tag: 'Xã hội · Khảo cứu',
+      re: /\b(social science|sociology|feminism|feminist|cultural studies|gender studies|anthropology|political science|social analysis|secret history|asexuality)\b|xã hội học|khảo cứu|văn hóa|nữ quyền|lịch sử xã hội/i,
+      excludeIf: /\b(thriller|serial killer|detective|fantasy|magic)\b/i,
     },
     {
       genre: 'Science & Tech',
       tag: 'Khoa học · Công nghệ',
-      re: /\b(physics|biology|chemistry|mathematics|astronomy|cosmology|evolution|computer science|programming|algorithm|software|engineering|technology|genetics|medicine)\b|khoa học|công nghệ|vật lý|sinh học|lập trình|thuật toán|y học|tiến hóa/i,
+      re: /\b(astrophysics|quantum physics|evolutionary biology|cosmology|computer science|software engineering|programming|algorithms|genetics|popular science)\b|vật lý học|sinh học|lập trình|thuật toán|khoa học tự nhiên/i,
     },
     {
       genre: 'Biography & Memoir',
       tag: 'Tiểu sử · Hồi ký',
-      re: /\b(biography|autobiography|memoir|memoirs|diary|letters|life story|true story)\b|tiểu sử|tự truyện|hồi ký|nhật ký/i,
+      re: /\b(biography|autobiography|memoir|memoirs|correspondence|letters from)\b|tiểu sử|tự truyện|hồi ký|nhật ký/i,
     },
     {
       genre: 'Light Novel & Manga',
       tag: 'Light Novel',
-      re: /\b(light novel|isekai|manga|anime|shonen|seinen|manhwa|wuxia|xianxia)\b|light novel|tiểu thuyết nhẹ|chuyển sinh/i,
+      re: /\b(light novel|isekai|manga|anime|shonen|seinen|manhwa)\b|light novel|tiểu thuyết nhẹ|chuyển sinh/i,
     },
     {
       genre: 'Young Adult',
       tag: 'Tuổi mới lớn',
-      re: /\b(young adult|ya fiction|coming of age|teen|high school|academy)\b|tuổi mới lớn|thanh xuân|học đường/i,
+      re: /\b(young adult|ya fiction|juvenile fiction|teen\s*&\s*young adult|coming-of-age|coming of age)\b|tuổi mới lớn|văn học tuổi teen|thanh xuân vườn trường/i,
     },
   ];
 
-  // Comprehensive Genre Taxonomy Descriptions (Bilingual / Vietnamese)
+  // Comprehensive Multi-Paragraph Literary Genre Descriptions (Bilingual / Vietnamese)
   const GENRE_TAXONOMY_DESCRIPTIONS = {
-    'Mystery & Detective': 'Tập hợp các tác phẩm điều tra phá án ly kỳ, những vụ án bí ẩn, logic suy luận sắc bén và những màn đấu trí kịch tính giữa thám tử và tội phạm.',
-    'Trinh thám': 'Tập hợp các tác phẩm điều tra phá án ly kỳ, những vụ án bí ẩn, logic suy luận sắc bén và những màn đấu trí kịch tính giữa thám tử và tội phạm.',
-    'Thriller & Suspense': 'Tiết tấu dồn dập, hồi hộp nghẹt thở, những âm mưu nguy hiểm, thế giới điệp viên và những tình huống ngàn cân treo sợi tóc.',
-    'Giật gân': 'Tiết tấu dồn dập, hồi hộp nghẹt thở, những âm mưu nguy hiểm, thế giới điệp viên và những tình huống ngàn cân treo sợi tóc.',
-    'Sci-Fi': 'Khám phá tương lai nhân loại, công nghệ tối tân, trí tuệ nhân tạo, du hành vũ trụ và những chiều không gian song song kỳ vĩ.',
-    'Khoa học VT': 'Khám phá tương lai nhân loại, công nghệ tối tân, trí tuệ nhân tạo, du hành vũ trụ và những chiều không gian song song kỳ vĩ.',
-    'Fantasy': 'Thế giới phép thuật nhiệm màu, thần thoại, những vùng đất kỳ bí, kiếm hiệp, tiên hiệp và các cuộc phiêu lưu huyền thoại.',
-    'Kỳ ảo': 'Thế giới phép thuật nhiệm màu, thần thoại, những vùng đất kỳ bí, kiếm hiệp, tiên hiệp và các cuộc phiêu lưu huyền thoại.',
-    'Romance': 'Những câu chuyện tình yêu ngọt ngào, sâu lắng, những cung bậc cảm xúc rung động trái tim và hành trình gắn kết lứa đôi.',
-    'Tình cảm': 'Những câu chuyện tình yêu ngọt ngào, sâu lắng, những cung bậc cảm xúc rung động trái tim và hành trình gắn kết lứa đôi.',
-    'Horror': 'Không khí rùng rợn, ám ảnh, những hiện tượng siêu nhiên kỳ bí và nỗi sợ hãi tâm lý sâu thẳm.',
-    'Kinh dị': 'Không khí rùng rợn, ám ảnh, những hiện tượng siêu nhiên kỳ bí và nỗi sợ hãi tâm lý sâu thẳm.',
-    'Historical Fiction': 'Tái hiện sống động các thời kỳ hào hùng, biến cố lịch sử, văn hóa và thân phận con người qua các giai đoạn thăng trầm.',
-    'Lịch sử': 'Tái hiện sống động các thời kỳ hào hùng, biến cố lịch sử, văn hóa và thân phận con người qua các giai đoạn thăng trầm.',
-    'Classic Literature': 'Những kiệt tác văn chương vượt thời gian của các đại văn hào thế giới, mang giá trị nhân văn sâu sắc và tính nghệ thuật mẫu mực.',
-    'Kinh điển': 'Những kiệt tác văn chương vượt thời gian của các đại văn hào thế giới, mang giá trị nhân văn sâu sắc và tính nghệ thuật mẫu mực.',
-    'Business & Finance': 'Kiến thức thực chiến về kinh tế, đầu tư tài chính, quản trị doanh nghiệp, khởi nghiệp và tư duy làm giàu thông minh.',
-    'Kinh doanh': 'Kiến thức thực chiến về kinh tế, đầu tư tài chính, quản trị doanh nghiệp, khởi nghiệp và tư duy làm giàu thông minh.',
-    'Self-Help & Productivity': 'Rèn luyện thói quen tích cực, nâng cao hiệu suất làm việc, làm chủ tư duy và phát triển bản thân mỗi ngày.',
-    'Phát triển bản thân': 'Rèn luyện thói quen tích cực, nâng cao hiệu suất làm việc, làm chủ tư duy và phát triển bản thân mỗi ngày.',
-    'Psychology & Philosophy': 'Thấu hiểu chiều sâu tâm lý con người, quy luật hành vi, triết lý sống khắc kỷ và những chiêm nghiệm nhân sinh sâu sắc.',
-    'Tâm lý · Triết học': 'Thấu hiểu chiều sâu tâm lý con người, quy luật hành vi, triết lý sống khắc kỷ và những chiêm nghiệm nhân sinh sâu sắc.',
-    'Science & Tech': 'Những đột phá khoa học, vật lý, sinh học, công nghệ lập trình và tri thức định hình tương lai thế giới.',
-    'Khoa học · Công nghệ': 'Những đột phá khoa học, vật lý, sinh học, công nghệ lập trình và tri thức định hình tương lai thế giới.',
-    'Biography & Memoir': 'Những trang đời chân thực, câu chuyện vượt khó truyền cảm hứng và di sản của các nhân vật kiệt xuất.',
-    'Tiểu sử · Hồi ký': 'Những trang đời chân thực, câu chuyện vượt khó truyền cảm hứng và di sản của các nhân vật kiệt xuất.',
-    'Light Novel & Manga': 'Phong cách tiểu thuyết trẻ trung, phiêu lưu thế giới khác (Isekai), học đường thanh xuân và văn hóa đương đại.',
-    'Light Novel': 'Phong cách tiểu thuyết trẻ trung, phiêu lưu thế giới khác (Isekai), học đường thanh xuân và văn hóa đương đại.',
-    'Young Adult': 'Thanh xuân nhiệt huyết, những bỡ ngỡ đầu đời, tình bạn, tình yêu học đường và hành trình tìm kiếm bản thân.',
-    'Tuổi mới lớn': 'Thanh xuân nhiệt huyết, những bỡ ngỡ đầu đời, tình bạn, tình yêu học đường và hành trình tìm kiếm bản thân.',
-    'General Fiction': 'Những góc nhìn đa chiều về cuộc sống, bức tranh xã hội hiện đại và chiều sâu nội tâm con người.',
-    'Văn học': 'Những góc nhìn đa chiều về cuộc sống, bức tranh xã hội hiện đại và chiều sâu nội tâm con người.',
-    'Poetry & Drama': 'Nghệ thuật ngôn từ tinh tế, cảm xúc dạt dào qua những vần thơ bất hủ và các tác phẩm kịch nghệ sâu sắc.',
-    'Thơ & Kịch': 'Nghệ thuật ngôn từ tinh tế, cảm xúc dạt dào qua những vần thơ bất hủ và các tác phẩm kịch nghệ sâu sắc.',
-    'Travel & Adventure': 'Hành trình khám phá những vùng đất mới lạ, văn hóa muôn màu và tinh thần phiêu lưu phóng khoáng.',
-    'Du ký': 'Hành trình khám phá những vùng đất mới lạ, văn hóa muôn màu và tinh thần phiêu lưu phóng khoáng.',
-    'Religion & Spirituality': 'Chiêm nghiệm tâm linh, tôn giáo, tìm kiếm sự bình an nội tâm và ý nghĩa cuộc sống.',
-    'Tâm linh': 'Chiêm nghiệm tâm linh, tôn giáo, tìm kiếm sự bình an nội tâm và ý nghĩa cuộc sống.',
-    'Humor & Comedy': 'Tiếng cười sảng khoái, góc nhìn hóm hỉnh, châm biếm sâu cay và niềm vui tích cực trong cuộc sống.',
-    'Hài hước': 'Tiếng cười sảng khoái, góc nhìn hóm hỉnh, châm biếm sâu cay và niềm vui tích cực trong cuộc sống.',
-    'Wuxia & Xianxia': 'Thế giới võ lâm giang hồ, ân oán tình thù, tu tiên luyện khí, phi thăng tiên giới và tinh thần hiệp nghĩa hào hùng.',
-    'Kiếm hiệp': 'Thế giới võ lâm giang hồ, ân oán tình thù, tu tiên luyện khí, phi thăng tiên giới và tinh thần hiệp nghĩa hào hùng.',
+    'Mystery & Detective':
+      'Trinh thám & Điều tra (Mystery & Detective) là dòng văn học tôn vinh trí tuệ sắc bén, óc quan sát tinh tường và nghệ thuật suy luận logic trước những vụ án tưởng chừng không lời giải. Từ hiện trường khép kín đầy bí ẩn, những manh mối mong manh bị che giấu khéo léo cho đến quá khứ phức tạp của từng nghi phạm, mỗi trang sách đều mời gọi người đọc trực tiếp tham gia vào cuộc điều tra phá án cùng người thám tử.\n\nDòng sách này trải rộng từ trinh thám cổ điển (Whodunit), điều tra cảnh sát hiện đại (Police Procedural), pháp y hình sự (Forensic Mystery) cho tới trinh thám tâm lý Bắc Âu (Nordic Noir). Sức hút bền bỉ của thể loại nằm ở sự cân bằng hoàn hảo giữa những cú ngoặt bất ngờ (plot twists), bầu không khí căng thẳng và chiều sâu đạo đức đằng sau mỗi tội ác.',
+    'Thriller & Suspense':
+      'Giật gân & Hồi hộp (Thriller & Suspense) cuốn người đọc vào nhịp độ dồn dập nghẹt thở ngay từ những chương đầu tiên, nơi hiểm nguy luôn rình rập và thời gian đếm ngược từng giờ. Khác với trinh thám thuần giải đố, dòng sách Thriller đẩy nhân vật chính vào những tình thế ngàn cân treo sợi tóc — buộc họ phải chạy đua để ngăn chặn một âm mưu lớn, vạch trần kẻ phản bội hoặc bảo vệ mạng sống của những người thân yêu.\n\nThể loại này bao hàm nhiều nhánh đặc sắc như Giật gân tâm lý & Hôn nhân đen tối (Psychological Thriller & Domestic Noir), Tình báo – Điệp viên quốc tế (Espionage), Hành động – Tội phạm và Pháp đình. Những bí mật bị chôn vùi dưới vẻ ngoài hoàn hảo cùng sự đảo chiều liên tục khiến độc giả không thể rời mắt cho đến dòng cuối cùng.',
+    'Sci-Fi':
+      'Khoa học Viễn tưởng (Science Fiction / Sci-Fi) mở ra cánh cửa khám phá tương lai nhân loại, những nền văn minh ngoài vũ trụ bao la và giới hạn tận cùng của khoa học – công nghệ. Dựa trên nền tảng các giả thuyết vật lý, sinh học, trí tuệ nhân tạo (AI), du hành không gian – thời gian và kỹ thuật di truyền, Sci-Fi đặt ra câu hỏi lớn lao: Điều gì định nghĩa bản chất con người khi thế giới thay đổi hoàn toàn?\n\nTừ sử thi không gian hào hùng (Space Opera), thế giới hậu tận thế khắc nghiệt (Post-Apocalyptic & Dystopian) cho tới Cyberpunk gai góc, mỗi tác phẩm vừa là chuyến phiêu lưu kỳ vĩ vượt qua các vì sao, vừa là tấm gương phản chiếu sâu sắc xã hội hiện đại.',
+    'Fantasy':
+      'Kỳ ảo & Huyền huyễn (Fantasy) đưa người đọc bước qua ranh giới thực tại để tiến vào những thế giới nhiệm màu của phép thuật cổ xưa, thần thoại, rồng thiêng, các vương quốc huyền bí và những lời tiên tri định mệnh. Ở đó, trí tưởng tượng được giải phóng trọn vẹn qua hệ thống ma thuật độc đáo, lịch sử các chủng tộc và những cuộc hành trình anh hùng vượt qua bóng tối.\n\nBên cạnh dòng Epic Fantasy & Urban Fantasy phương Tây, thể loại này còn giao thoa với Hiện thực huyền ảo (Magical Realism), Cải biên cổ tích – thần thoại và Kiếm hiệp – Tiên hiệp phương Đông, nơi tình bạn, lòng quả cảm, sự hy sinh và khát vọng tự do luôn tỏa sáng rực rỡ.',
+    'Romance':
+      'Tình cảm & Lãng mạn (Romance) là bản giao hưởng của những rung động trái tim, sự đồng điệu tâm hồn và hành trình hai con người tìm thấy nhau giữa muôn vàn thử thách của cuộc đời. Với lối viết giàu cảm xúc, tinh tế trong từng ánh nhìn và đối thoại, thể loại này khắc họa trọn vẹn vẻ đẹp vừa ngọt ngào vừa mong manh của tình yêu đôi lứa.\n\nDù là chuyện tình thị trấn nhỏ ấm áp (Small-Town Cozy Romance), oan gia ngõ hẹp (Enemies to Lovers), cơ hội thứ hai sau tổn thương hay những mối tình khắc cốt ghi tâm vượt thời gian, dòng sách Romance luôn mang lại cảm giác ấm áp, chữa lành và niềm tin vào hạnh phúc.',
+    'Horror':
+      'Kinh dị & Siêu nhiên (Horror) đánh thức những nỗi sợ nguyên thủy sâu thẳm nhất trong tiềm thức con người — nơi bóng tối không chỉ ẩn náu trong những ngôi nhà bị nguyền rủa, thực thể tâm linh kỳ dị hay nghi thức trừ tà cổ xưa, mà còn len lỏi ngay trong tâm trí con người khi đối diện với cái chưa biết.\n\nKết hợp giữa bầu không khí u tối ngột ngạt (Gothic & Atmospheric Horror), yếu tố siêu nhiên rùng rợn và chiều sâu ẩn dụ xã hội, những tác phẩm kinh dị xuất sắc không chỉ khiến người đọc lạnh sống lưng mà còn để lại dư âm ám ảnh lâu dài về lòng dũng cảm và bản năng sinh tồn.',
+    'Historical Fiction':
+      'Tiểu thuyết Lịch sử (Historical Fiction) tái hiện sống động hơi thở của những thời đại đã lùi xa — từ các triều đại phong kiến đầy biến động, châu Âu thời Trung cổ & Phục hưng, nước Anh thời Tudor – Victoria cho tới khói lửa của hai cuộc Thế chiến. Qua lăng kính văn chương giàu tư liệu, quá khứ hiện lên không còn là những con số khô khan mà bằng máu thịt, khát vọng và số phận con người.\n\nSự hòa quyện giữa bối cảnh lịch sử chân thực với cốt truyện trinh thám, gián điệp hoặc bi kịch gia tộc giúp người đọc vừa đắm chìm trong một câu chuyện cuốn hút, vừa thấu hiểu sâu sắc văn hóa, phong tục và những bước ngoặt định hình thế giới.',
+    'Classic & Literary Fiction':
+      'Văn học Kinh điển & Đương đại (Classic & Literary Fiction) quy tụ những kiệt tác vượt thời gian của các đại văn hào thế giới cùng những tiểu thuyết văn chương đương đại giàu chất suy tư và chữa lành. Không chạy theo công thức giải trí đơn thuần, dòng sách này chăm chút từng câu chữ nghệ thuật, đi sâu khám phá vẻ đẹp bình dị đời thường, nỗi cô đơn đô thị và những góc khuất tinh tế nhất của tâm hồn.\n\nTừ các tác phẩm kinh điển bất hủ cho đến dòng văn học chữa lành Á Đông (những hiệu sách nhỏ, tiệm bánh đêm khuya, cửa hàng tiện lợi ven biển), mỗi cuốn sách là một khoảng lặng dịu dàng giúp người đọc lắng nghe và thấu cảm với chính mình.',
+    'Classic Literature':
+      'Văn học Kinh điển (Classic Literature) là kho tàng những kiệt tác văn chương vượt qua thử thách của hàng thế kỷ, kết tinh tư tưởng nhân văn sâu sắc và nghệ thuật ngôn từ bậc thầy của nhân loại. Mỗi tác phẩm mở ra bức tranh toàn cảnh về thời đại, phẩm giá con người, tình yêu, tham vọng và sự cứu rỗi.\n\nĐọc lại kinh điển ở mỗi giai đoạn cuộc đời luôn mang đến những tầng ý nghĩa mới mẻ, bồi đắp nền tảng thẩm mỹ và chiều sâu tri thức bền vững cho người yêu sách.',
+    'Business & Finance':
+      'Kinh doanh & Tài chính (Business & Finance) cung cấp hệ thống tư duy chiến lược, nguyên lý kinh tế học ứng dụng, nghệ thuật quản trị lãnh đạo và phương pháp đầu tư tài chính bền vững trong kỷ nguyên hiện đại. Thông qua các nghiên cứu tình huống thực tiễn và bài học thành bại của những tập đoàn lớn, dòng sách này giúp người đọc nhìn thấu quy luật vận hành của dòng tiền và thị trường.\n\nĐây là nguồn tham khảo thiết thực dành cho bất kỳ ai muốn nâng cao năng lực ra quyết định, khởi nghiệp thông minh và xây dựng tự do tài chính cá nhân.',
+    'Self-Help & Productivity':
+      'Phát triển Bản thân & Hiệu suất (Self-Help & Productivity) tập trung vào nghệ thuật kiến tạo thói quen tích cực, quản trị thời gian – năng lượng, rèn luyện sự tập trung sâu (Deep Work) và nuôi dưỡng tư duy cầu tiến. Thay vì những lời khuyên sáo rỗng, các tác phẩm tiêu biểu trong thể loại này kết hợp khoa học hành vi với lộ trình thực hành cụ thể từng bước nhỏ mỗi ngày.\n\nMỗi cuốn sách đóng vai trò như một người đồng hành thực tế, giúp bạn tháo gỡ trì hoãn, cân bằng cảm xúc và phát huy tối đa tiềm năng sẵn có.',
+    'Psychology & Philosophy':
+      'Tâm lý học & Triết học (Psychology & Philosophy) dẫn dắt người đọc đi sâu khám phá cơ chế vận hành kỳ diệu của tâm trí, khoa học gắn kết tình cảm, các thiên kiến nhận thức cũng như những câu hỏi nền tảng về đạo đức, tình bạn, tình yêu và ý nghĩa tồn tại. Từ đối thoại triết học cổ điển Hy Lạp, chủ nghĩa Khắc kỷ (Stoicism) cho đến tâm lý học thực nghiệm hiện đại, tri thức luôn gắn liền với nghệ thuật sống tỉnh thức.\n\nĐọc dòng sách này giúp mở rộng nhãn quan đa chiều, rèn luyện tư duy phản biện sắc sảo và tìm thấy sự điềm tĩnh vững vàng trước biến động ngoại cảnh.',
+    'History & Society':
+      'Lịch sử & Khảo cứu Xã hội (History & Society) tập hợp các công trình phi hư cấu sắc sảo phân tích văn hóa, biến chuyển xã hội, lịch sử tư tưởng, bình đẳng giới và những mối quan hệ con người trong thế giới hiện đại. Bằng lập luận chặt chẽ kết hợp tư liệu phong phú và những câu chuyện đời thực sống động, các tác giả bóc tách những định kiến quen thuộc để hé lộ góc nhìn sâu rộng hơn về cộng đồng quanh ta.\n\nĐây là dòng sách khơi gợi đối thoại trí tuệ, bồi đắp sự thấu cảm xã hội và giúp người đọc hiểu rõ cội nguồn của những xu hướng đương đại.',
+    'Science & Tech':
+      'Khoa học & Công nghệ (Science & Tech) giải mã những quy luật kỳ thú của vũ trụ, vật lý lượng tử, sinh học tiến hóa, y học hiện đại cùng cuộc cách mạng phần mềm và trí tuệ nhân tạo đang định hình tương lai thế giới. Với lối diễn giải mạch lạc, giàu hình ảnh dành cho đại chúng, những khái niệm khoa học phức tạp trở nên gần gũi và đầy cảm hứng khám phá.\n\nThể loại này nuôi dưỡng trí tò mò khoa học, tư duy duy lý dựa trên bằng chứng và cái nhìn toàn diện về hành trình tri thức của nhân loại.',
+    'Biography & Memoir':
+      'Tiểu sử & Hồi ký (Biography & Memoir) lưu giữ những lát cắt đời thực chân thành, xúc động về hành trình sống, lao động sáng tạo và vượt qua nghịch cảnh của các nhân vật lịch sử, nghệ sĩ, nhà tư tưởng lẫn những con người bình dị phi thường. Không có kịch bản hư cấu nào mạnh mẽ hơn chính sự thật được kể lại bằng trải nghiệm xương máu và sự chiêm nghiệm sâu lắng.\n\nTừng trang hồi ký truyền tải nguồn cảm hứng sống mãnh liệt, sự đồng cảm sâu sắc và những bài học quý giá rút ra từ chính cuộc đời thật.',
+    'Light Novel & Manga':
+      'Light Novel & Manga mang phong cách kể chuyện trẻ trung, giàu tính thị giác, nhịp điệu linh hoạt và trí tưởng tượng phóng khoáng đặc trưng của văn hóa đại chúng Nhật Bản – Á Đông. Từ những cuộc phiêu lưu chuyển sinh sang thế giới khác (Isekai), giả tưởng học đường cho tới trinh thám đời thường dí dỏm, thể loại này luôn tạo nên thế giới nhân vật sống động và giàu cá tính.\n\nSự kết hợp giữa cốt truyện lôi cuốn, hội thoại tự nhiên và cảm xúc trong trẻo giúp dòng sách này trở thành lựa chọn giải trí tuyệt vời sau những giờ làm việc căng thẳng.',
+    'Young Adult':
+      'Văn học Tuổi mới lớn (Young Adult / YA) khắc họa chân thực ngưỡng cửa trưởng thành đầy bão giông nhưng cũng rực rỡ ước mơ của tuổi trẻ — nơi những rung động đầu đời, tình bạn tri kỷ, nỗi chênh vênh định hình bản sắc cá nhân và lòng dũng cảm đối diện mất mát đan xen mãnh liệt.\n\nDù đặt trong bối cảnh hiện đại, học đường hay giả tưởng kịch tính, các tác phẩm YA luôn chạm tới trái tim người đọc ở mọi lứa tuổi nhờ sự chân thành, nồng nhiệt và khát vọng vươn tới ánh sáng.',
+    'General Fiction':
+      'Văn học Tổng hợp (General Fiction) bao gồm những câu chuyện đa sắc màu phản ánh muôn mặt đời sống xã hội, các mối quan hệ gia đình, tình bạn và hành trình nội tâm của con người hiện đại. Không bị giới hạn trong một khuôn mẫu thể loại cứng nhắc, mỗi cuốn sách mang một giọng điệu riêng biệt và giàu sức gợi.\n\nĐây là không gian dành cho những độc giả yêu thích sự tự do khám phá những miền cảm xúc mới mẻ qua từng trang viết.',
+  };
+
+  // Vietnamese aliases pointing to canonical essays
+  const GENRE_VI_ALIASES = {
+    'Trinh thám': 'Mystery & Detective',
+    'Giật gân': 'Thriller & Suspense',
+    'Khoa học VT': 'Sci-Fi',
+    'Kỳ ảo': 'Fantasy',
+    'Tình cảm': 'Romance',
+    'Kinh dị': 'Horror',
+    'Lịch sử': 'Historical Fiction',
+    'Kinh điển': 'Classic Literature',
+    'Văn học': 'Classic & Literary Fiction',
+    'Kinh doanh': 'Business & Finance',
+    'Phát triển bản thân': 'Self-Help & Productivity',
+    'Tâm lý · Triết học': 'Psychology & Philosophy',
+    'Xã hội · Khảo cứu': 'History & Society',
+    'Khoa học · Công nghệ': 'Science & Tech',
+    'Tiểu sử · Hồi ký': 'Biography & Memoir',
+    'Light Novel': 'Light Novel & Manga',
+    'Tuổi mới lớn': 'Young Adult',
   };
 
   function getGenreTaxonomyDescription(genreName, books = []) {
     const raw = String(genreName || '').trim();
-    if (!raw) return 'Tuyển tập các tác phẩm đặc sắc trong thư viện của bạn.';
-    if (GENRE_TAXONOMY_DESCRIPTIONS[raw]) {
-      return GENRE_TAXONOMY_DESCRIPTIONS[raw];
-    }
-    const lower = raw.toLowerCase();
-    for (const [key, desc] of Object.entries(GENRE_TAXONOMY_DESCRIPTIONS)) {
-      if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) {
-        return desc;
-      }
-    }
-    for (const rule of GENRE_RULES) {
-      if (rule.genre.toLowerCase() === lower || rule.tag.toLowerCase() === lower || rule.re.test(raw)) {
-        if (GENRE_TAXONOMY_DESCRIPTIONS[rule.genre]) return GENRE_TAXONOMY_DESCRIPTIONS[rule.genre];
-        if (GENRE_TAXONOMY_DESCRIPTIONS[rule.tag]) return GENRE_TAXONOMY_DESCRIPTIONS[rule.tag];
-      }
-    }
     const safeBooks = Array.isArray(books) ? books : [];
-    const sample = safeBooks.slice(0, 3).map((b) => b.title).filter(Boolean).join(', ');
-    if (sample) {
-      return `Tuyển tập các tác phẩm thể loại ${raw} (${safeBooks.length} cuốn sách trong thư viện của bạn), tiêu biểu gồm: ${sample}.`;
+    if (!raw) return 'Tuyển tập các tác phẩm đặc sắc được lưu trữ và phân loại trong thư viện cá nhân của bạn.';
+
+    const mappedKey = GENRE_VI_ALIASES[raw] || raw;
+    let baseEssay = GENRE_TAXONOMY_DESCRIPTIONS[mappedKey] || '';
+
+    if (!baseEssay) {
+      const lower = raw.toLowerCase();
+      for (const [key, desc] of Object.entries(GENRE_TAXONOMY_DESCRIPTIONS)) {
+        if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) {
+          baseEssay = desc;
+          break;
+        }
+      }
     }
-    return `Tuyển tập các tác phẩm thuộc thể loại ${raw} được tuyển chọn trong kho sách của bạn.`;
+    if (!baseEssay) {
+      for (const rule of GENRE_RULES) {
+        if (rule.genre.toLowerCase() === raw.toLowerCase() || rule.tag.toLowerCase() === raw.toLowerCase() || rule.re.test(raw)) {
+          baseEssay = GENRE_TAXONOMY_DESCRIPTIONS[rule.genre] || '';
+          if (baseEssay) break;
+        }
+      }
+    }
+    if (!baseEssay) {
+      baseEssay =
+        `${raw} là nhóm chủ đề quy tụ những tác phẩm mang phong cách, bối cảnh và cảm hứng nghệ thuật đặc trưng trong thư viện của bạn. Các đầu sách thuộc nhánh này mở ra những góc nhìn phong phú, kết hợp giữa chiều sâu nội dung và sức hấp dẫn riêng biệt của từng tác giả.\n\nViệc phân loại theo chủ đề ${raw} giúp bạn dễ dàng khám phá mạch đọc liền mạch, so sánh bút pháp giữa các nhà văn cùng dòng và nhanh chóng tìm thấy cuốn sách phù hợp nhất với tâm trạng hiện tại.`;
+    }
+
+    // Append rich personalized library insights paragraph if books are provided!
+    if (safeBooks.length > 0) {
+      const authorCounts = new Map();
+      const seriesSet = new Set();
+      for (const b of safeBooks) {
+        if (b?.author && !isUnknownAuthor(b.author)) {
+          authorCounts.set(b.author, (authorCounts.get(b.author) || 0) + 1);
+        }
+        if (b?.series) seriesSet.add(b.series);
+      }
+      const topAuthors = Array.from(authorCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([a]) => a);
+      const sampleTitles = safeBooks
+        .slice(0, 4)
+        .map((b) => b?.title)
+        .filter(Boolean);
+
+      const parts = [`Trong thư viện hiện tại của bạn có ${safeBooks.length} cuốn sách thuộc thể loại này`];
+      if (seriesSet.size > 0) {
+        parts[0] += ` (bao gồm ${seriesSet.size} bộ truyện dài kỳ)`;
+      }
+      parts[0] += '.';
+      if (topAuthors.length > 0) {
+        parts.push(`Các tác giả tiêu biểu góp mặt gồm: ${topAuthors.join(', ')}.`);
+      }
+      if (sampleTitles.length > 0) {
+        parts.push(`Một số tựa sách nổi bật bạn có thể bắt đầu đọc ngay: "${sampleTitles.join('", "')}".`);
+      }
+      return `${baseEssay}\n\n${parts.join(' ')}`;
+    }
+
+    return baseEssay;
   }
 
-  // Clean raw OPF subjects / Google Books categories into canonical genres
-  function normalizeSubjectsToGenres(subjectsRaw, { strictCanonical = false } = {}) {
+  // Clean raw OPF subjects / Google Books categories into canonical genres (strictCanonical by default to avoid micro-genre clutter!)
+  function normalizeSubjectsToGenres(subjectsRaw, { strictCanonical = true } = {}) {
     const list = Array.isArray(subjectsRaw) ? subjectsRaw : subjectsRaw ? [subjectsRaw] : [];
     const genres = [];
     const tags = [];
@@ -706,9 +881,21 @@
       }
     };
 
+    // Map legacy/fine-grained subjects cleanly to canonical genres
+    const subGenreMap = [
+      { re: /\b(private investigator|cozy mystery|police procedural|amateur sleuth|crime)\b/i, genre: 'Mystery & Detective', tag: 'Trinh thám' },
+      { re: /\b(domestic noir|psychological|espionage|action\s*&\s*adventure|tomb raiding)\b/i, genre: 'Thriller & Suspense', tag: 'Giật gân' },
+      { re: /\b(post-apocalyptic|dystopian|space opera|cyberpunk)\b/i, genre: 'Sci-Fi', tag: 'Khoa học VT' },
+      { re: /\b(magical realism|fairytale|mythological|urban fantasy|epic fantasy)\b/i, genre: 'Fantasy', tag: 'Kỳ ảo' },
+      { re: /\b(literary|contemporary|baking|cuisine|cooking|food|bookshop|slice of life|humorous|satire)\b/i, genre: 'Classic & Literary Fiction', tag: 'Văn học · Chữa lành' },
+      { re: /\b(history\s*&\s*social|social|sociology|feminism|cultural|essay|politics)\b/i, genre: 'History & Society', tag: 'Xã hội · Khảo cứu' },
+    ];
+
+    const fullSubjectStr = list.join(' ; ');
+
     for (const raw of list) {
       const txt = decodeEntities(String(raw || ''));
-      if (!txt || txt.length > 80) continue;
+      if (!txt || txt.length > 90) continue;
       const parts = txt.split(/\s*[;/|]\s*/).map((s) => s.trim()).filter(Boolean);
       for (const part of parts) {
         if (/\b(new york times|bestseller|pulitzer|hugo award|nebula award|booker prize|nobel|award)\b/i.test(part)) {
@@ -716,18 +903,28 @@
         }
         let matchedRule = false;
         for (const rule of GENRE_RULES) {
-          if (rule.re.test(part)) {
+          if (rule.re.test(part) && !(rule.excludeIf && rule.excludeIf.test(fullSubjectStr))) {
             addGenre(rule.genre);
             addTag(rule.tag);
             matchedRule = true;
           }
         }
+        if (!matchedRule) {
+          for (const sm of subGenreMap) {
+            if (sm.re.test(part)) {
+              addGenre(sm.genre);
+              addTag(sm.tag);
+              matchedRule = true;
+              break;
+            }
+          }
+        }
         if (!strictCanonical && !matchedRule && part.length >= 3 && part.length <= 36) {
           addGenre(part);
         }
-        if (genres.length >= 4) break;
+        if (genres.length >= 3) break;
       }
-      if (genres.length >= 4) break;
+      if (genres.length >= 3) break;
     }
 
     return { genres, tags };
@@ -749,7 +946,7 @@
   }
 
   function inferGenresAndTags({ title = '', author = '', description = '', subjects = [], series = '', language = '', size = 0 }) {
-    const fromSub = normalizeSubjectsToGenres(subjects);
+    const fromSub = normalizeSubjectsToGenres(subjects, { strictCanonical: true });
     const genres = [...fromSub.genres];
     const tags = [...fromSub.tags];
     const seenG = new Set(genres.map((g) => g.toLowerCase()));
@@ -757,7 +954,7 @@
 
     const pushG = (g) => {
       const k = g.toLowerCase();
-      if (!seenG.has(k) && genres.length < 4) {
+      if (!seenG.has(k) && genres.length < 3) {
         seenG.add(k);
         genres.push(g);
       }
@@ -772,14 +969,18 @@
 
     const hay = `${title} ${author} ${series} ${description}`;
     for (const rule of GENRE_RULES) {
-      if (rule.re.test(hay)) {
+      if (rule.re.test(hay) && !(rule.excludeIf && rule.excludeIf.test(hay))) {
         pushG(rule.genre);
         pushT(rule.tag);
       }
     }
 
+    if (/\bpsychological\s+(?:thriller|suspense)\b|\bdomestic\s+noir\b/i.test(hay)) {
+      pushT('Tâm lý tội phạm');
+    }
+
     if (genres.length === 0) {
-      genres.push('General Fiction');
+      genres.push('Classic & Literary Fiction');
     }
 
     // Add useful smart discovery tags
@@ -795,7 +996,117 @@
       else if (size > 2.2 * 1024 * 1024) pushT('Trường thiên');
     }
 
-    return { genres: genres.slice(0, 4), tags: tags.slice(0, 6) };
+    return { genres: genres.slice(0, 3), tags: tags.slice(0, 6) };
+  }
+
+  // Cross-catalog intelligence: unify inverted 2-token author names ("Belle Kimberly" -> "Kimberly Belle")
+  // and same-author series variants ("Detective Roger 'Sami' Kierce" -> "Sami Kierce", "The Sun Eater" -> "Sun Eater")!
+  function unifyLibraryCatalog(books) {
+    if (!Array.isArray(books) || books.length === 0) return books;
+
+    // 1. Author frequency & token-set unification
+    const authorCounts = new Map();
+    for (const b of books) {
+      const a = normalizeAuthor(b.author) || b.author || 'Unknown Author';
+      b.author = a;
+      if (!isUnknownAuthor(a) && !a.includes(',')) {
+        authorCounts.set(a, (authorCounts.get(a) || 0) + 1);
+      }
+    }
+
+    const tokenSignatureMap = new Map(); // sortedTokensKey -> bestAuthorName
+    for (const [aName, count] of authorCounts.entries()) {
+      const toks = normalizePersonTokens(aName);
+      if (toks.length === 2) {
+        const sig = [...toks].sort().join('|');
+        const prev = tokenSignatureMap.get(sig);
+        if (!prev || count > prev.count) {
+          tokenSignatureMap.set(sig, { name: aName, count });
+        }
+      }
+    }
+
+    for (const b of books) {
+      if (!b.author || b.author.includes(',')) continue;
+      const toks = normalizePersonTokens(b.author);
+      if (toks.length === 2) {
+        const sig = [...toks].sort().join('|');
+        const best = tokenSignatureMap.get(sig);
+        if (best && best.name !== b.author && best.count > (authorCounts.get(b.author) || 0)) {
+          b.author = best.name;
+        }
+      }
+    }
+
+    // 2. Same-author series variant unification (e.g. "Detective Roger 'Sami' Kierce" + "Sami Kierce" -> "Sami Kierce", "The Sun Eater" -> "Sun Eater")
+    const simplifySeriesCore = (s) =>
+      String(s || '')
+        .toLowerCase()
+        .replace(/^(?:the|a|an)\s+/i, '')
+        .replace(/^(?:detective|inspector|agent|chief\s+inspector|di|dci|dr\.?|doctor)\s+/i, '')
+        .replace(/['"‘’“”]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const byAuthorSeries = new Map(); // authorLower -> Map<seriesName, count>
+    for (const b of books) {
+      if (!b.series) continue;
+      const cleaned = cleanSeriesName(b.series, b.author);
+      if (!cleaned) {
+        b.series = '';
+        continue;
+      }
+      b.series = cleaned;
+      const aKey = (b.author || '').toLowerCase();
+      if (!byAuthorSeries.has(aKey)) byAuthorSeries.set(aKey, new Map());
+      const sMap = byAuthorSeries.get(aKey);
+      sMap.set(b.series, (sMap.get(b.series) || 0) + 1);
+    }
+
+    const seriesRemap = new Map(); // `${aKey}::${oldSeries}` -> canonicalSeries
+    for (const [aKey, sMap] of byAuthorSeries.entries()) {
+      const entries = Array.from(sMap.entries()); // [seriesName, count]
+      if (entries.length < 2) continue;
+      // Prefer higher count, or shorter clean name without leading "The " / middle nickname clutter
+      entries.sort((x, y) => y[1] - x[1] || x[0].replace(/^the\s+/i, '').length - y[0].replace(/^the\s+/i, '').length);
+
+      for (let i = 0; i < entries.length; i++) {
+        const [candA] = entries[i];
+        const coreA = simplifySeriesCore(candA);
+        const toksA = coreA.split(' ').filter(Boolean);
+        for (let j = i + 1; j < entries.length; j++) {
+          const [candB] = entries[j];
+          const keyB = `${aKey}::${candB}`;
+          if (seriesRemap.has(keyB)) continue;
+          const coreB = simplifySeriesCore(candB);
+          const toksB = coreB.split(' ').filter(Boolean);
+
+          // Exact match after stripping "The " or "Detective "
+          if (coreA === coreB) {
+            const preferred = /^the\s+/i.test(candA) && !/^the\s+/i.test(candB) ? candB : candA;
+            seriesRemap.set(`${aKey}::${candA}`, preferred);
+            seriesRemap.set(`${aKey}::${candB}`, preferred);
+            continue;
+          }
+
+          // Subset token match for character names (at least 2 tokens, e.g. ["sami", "kierce"] subset of ["roger", "sami", "kierce"])
+          const shorter = toksA.length <= toksB.length ? { name: candA, toks: toksA } : { name: candB, toks: toksB };
+          const longer = toksA.length <= toksB.length ? { name: candB, toks: toksB } : { name: candA, toks: toksA };
+          if (shorter.toks.length >= 2 && shorter.toks.every((t) => longer.toks.includes(t))) {
+            seriesRemap.set(`${aKey}::${longer.name}`, shorter.name);
+          }
+        }
+      }
+    }
+
+    for (const b of books) {
+      if (!b.series) continue;
+      const aKey = (b.author || '').toLowerCase();
+      const mapped = seriesRemap.get(`${aKey}::${b.series}`);
+      if (mapped) b.series = mapped;
+    }
+
+    return books;
   }
 
   function analyzeBookMetadata(raw = {}) {
@@ -1359,5 +1670,6 @@
     enrichSeriesOnline,
     getGenreTaxonomyDescription,
     GENRE_TAXONOMY_DESCRIPTIONS,
+    unifyLibraryCatalog,
   };
 });

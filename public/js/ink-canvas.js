@@ -124,10 +124,12 @@
 
       this.canvas = document.getElementById('ink-canvas');
       this.stage = document.getElementById('reader-stage');
+      this.readerView = document.getElementById('reader-view');
       this.toolbar = document.getElementById('pen-toolbar');
       this.quickPill = document.getElementById('spen-quick-pill');
       this.detailPanel = document.getElementById('pen-detail-panel');
       this.previewCanvas = document.getElementById('pen-preview-canvas');
+      this.eraserCursor = document.getElementById('spen-eraser-cursor');
       this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
 
       this.active = false;
@@ -171,14 +173,22 @@
       this.pageKey = null;
       this.pageMeta = null;
       this.strokes = [];
+      this.undoStack = [];
       this.redoStack = [];
 
       this.drawing = false;
+      this.barrelEraserActive = false;
       this.activePointerId = null;
       this.activePointerType = '';
       this.currentStroke = null;
       this.erasedDuringGesture = false;
       this._preEraseSnapshot = null;
+      this._straightenHoldTimer = null;
+      this._strokeSnappedStraight = false;
+      this._snappedLockedNy = null;
+      this._holdAnchor = null;
+      this._hlStartClient = null;
+      this._lastMoveClient = null;
 
       this.bindEvents();
       this.renderPaletteTabs();
@@ -264,15 +274,96 @@
       }, 4200);
     }
 
+    isSPenSideButtonPressed(e) {
+      if (!e || e.pointerType !== 'pen') return false;
+      if (e.button === 5 || e.button === 2) return true;
+      if (typeof e.buttons === 'number' && ((e.buttons & 32) !== 0 || (e.buttons & 2) !== 0)) {
+        return true;
+      }
+      return false;
+    }
+
+    updateEraserCursor(e, forceHide = false) {
+      const el = this.eraserCursor || document.getElementById('spen-eraser-cursor');
+      if (!el || !this.stage) return;
+      this.eraserCursor = el;
+
+      if (forceHide || !e) {
+        el.classList.add('hidden');
+        if (this.barrelEraserActive) {
+          this.barrelEraserActive = false;
+          this.syncToolbarUI();
+        }
+        return;
+      }
+
+      const sidePressed = this.isSPenSideButtonPressed(e);
+      const showCursor = sidePressed || (e.pointerType === 'pen' && (this.tool === 'eraser' || this._gestureIsEraser));
+      if (sidePressed !== this.barrelEraserActive) {
+        this.barrelEraserActive = sidePressed;
+        this.syncToolbarUI();
+      }
+
+      if (!showCursor) {
+        el.classList.add('hidden');
+        return;
+      }
+
+      const rect = this.stage.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const scaleX = rect.width / Math.max(1, this.stage.clientWidth || rect.width);
+      const scaleY = rect.height / Math.max(1, this.stage.clientHeight || rect.height);
+      const localX = (e.clientX - rect.left) / Math.max(0.2, scaleX);
+      const localY = (e.clientY - rect.top) / Math.max(0.2, scaleY);
+      const diam = Math.max(20, (this.eraserSize || 18) * 2);
+
+      el.style.width = `${diam}px`;
+      el.style.height = `${diam}px`;
+      el.style.transform = `translate3d(${Math.round(localX - diam / 2)}px, ${Math.round(localY - diam / 2)}px, 0)`;
+      el.classList.toggle('barrel-active', sidePressed);
+      el.classList.remove('hidden');
+    }
+
+    updateStageClearance() {
+      const rv = this.readerView || document.getElementById('reader-view');
+      if (!rv || !this.stage || !this.toolbar) return;
+      this.readerView = rv;
+
+      rv.classList.toggle('pen-bar-open', this.active);
+      if (!this.active) {
+        rv.style.removeProperty('--pen-stage-scale');
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        if (!this.active || !this.stage || !this.toolbar) return;
+        const isScroll = this.stage.classList.contains('mode-scroll');
+        if (isScroll) {
+          rv.style.removeProperty('--pen-stage-scale');
+          return;
+        }
+        const tbRect = this.toolbar.getBoundingClientRect();
+        const rvRect = rv.getBoundingClientRect();
+        const stageTop = rvRect.top + this.stage.offsetTop;
+        const naturalH = Math.max(1, this.stage.offsetHeight);
+        // Reserve 14px breathing room above pen-toolbar so nib buttons NEVER touch book content!
+        const safeBottomY = tbRect.height > 0 ? tbRect.top - 14 : rvRect.bottom - 122;
+        const availH = Math.max(180, safeBottomY - stageTop);
+        const ratio = Math.min(1, Math.max(0.72, availH / naturalH));
+        rv.style.setProperty('--pen-stage-scale', ratio.toFixed(4));
+      });
+    }
+
     syncQuickPillUI() {
       if (!this.quickPill) return;
       const shouldShow = Boolean(
         this.bookId && !this.active && (this.spenDetectedInSession || this.strokes.length > 0)
       );
       this.quickPill.classList.toggle('hidden', !shouldShow);
+      this.readerView?.classList.toggle('spen-pill-visible', shouldShow);
       if (!shouldShow) return;
 
-      const isEraser = this.tool === 'eraser';
+      const isEraser = this.tool === 'eraser' || this.barrelEraserActive;
       const dotEl = document.getElementById('spen-pill-color-dot');
       const nameEl = document.getElementById('spen-pill-tool-name');
       const erBtn = document.getElementById('spen-pill-eraser-btn');
@@ -286,13 +377,15 @@
           : this.color;
       }
       if (nameEl) {
-        nameEl.textContent = TOOL_META[this.tool]?.label || 'Bút máy';
+        nameEl.textContent = this.barrelEraserActive
+          ? 'Tẩy (Nút S Pen)'
+          : TOOL_META[this.tool]?.label || 'Bút máy';
       }
       if (erBtn) {
         erBtn.classList.toggle('active', isEraser);
       }
       if (undoBtn) {
-        undoBtn.disabled = this.strokes.length === 0;
+        undoBtn.disabled = this.undoStack.length === 0 && this.strokes.length === 0;
       }
     }
 
@@ -303,6 +396,7 @@
       this.toolbar?.classList.toggle('open', this.active);
       document.getElementById('hud-pen-btn')?.classList.toggle('active', this.active);
       document.getElementById('hud-pen-btn')?.setAttribute('aria-pressed', String(this.active));
+      this.updateStageClearance();
       this.onActiveChange?.(this.active);
       this.syncToolbarUI();
     }
@@ -360,8 +454,10 @@
       this.pageKey = pageKey;
       this.pageMeta = meta || null;
       this.strokes = Array.isArray(strokes) ? structuredClone(strokes) : [];
+      this.undoStack = [];
       this.redoStack = [];
       this.resizeCanvas();
+      this.updateStageClearance();
       this.redraw();
       this.syncToolbarUI();
     }
@@ -369,13 +465,16 @@
     clearContext() {
       this.setActive(false);
       this.setPenInRange(false);
+      this.updateEraserCursor(null, true);
       this.penHovering = false;
       this.penDown = false;
       this.bookId = null;
       this.pageKey = null;
       this.strokes = [];
+      this.undoStack = [];
       this.redoStack = [];
       this.quickPill?.classList.add('hidden');
+      this.readerView?.classList.remove('spen-pill-visible', 'pen-bar-open');
       if (this.ctx && this.canvas) {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
       }
@@ -385,8 +484,9 @@
       if (!this.canvas || !this.stage) return;
       const rect = this.stage.getBoundingClientRect();
       const dpr = Math.min(window.devicePixelRatio || 1, 3);
-      const w = Math.max(1, Math.floor(rect.width));
-      const h = Math.max(1, Math.floor(rect.height));
+      // Use unscaled layout box (clientWidth/clientHeight) so CSS transform:scale() keeps crisp native ink coordinates!
+      const w = Math.max(1, Math.floor(this.stage.clientWidth || rect.width));
+      const h = Math.max(1, Math.floor(this.stage.clientHeight || rect.height));
       if (this.canvas.width !== Math.floor(w * dpr) || this.canvas.height !== Math.floor(h * dpr)) {
         this.canvas.width = Math.floor(w * dpr);
         this.canvas.height = Math.floor(h * dpr);
@@ -671,10 +771,20 @@
       }
 
       if (modified) {
+        if (!this.erasedDuringGesture && this._preEraseSnapshot) {
+          this.pushUndoSnapshot(this._preEraseSnapshot);
+          this._preEraseSnapshot = null;
+        }
         this.strokes = next;
         this.erasedDuringGesture = true;
         this.redraw();
       }
+    }
+
+    pushUndoSnapshot(snapshot) {
+      this.undoStack.push(snapshot ? structuredClone(snapshot) : structuredClone(this.strokes));
+      if (this.undoStack.length > 35) this.undoStack.shift();
+      this.redoStack = [];
     }
 
     persist() {
@@ -684,26 +794,116 @@
     }
 
     undo() {
+      if (this.undoStack.length > 0) {
+        this.redoStack.push(structuredClone(this.strokes));
+        this.strokes = this.undoStack.pop();
+        this.redraw();
+        this.persist();
+        return;
+      }
       if (!this.strokes.length) return;
-      this.redoStack.push(this.strokes.pop());
+      this.redoStack.push(structuredClone(this.strokes));
+      this.strokes.pop();
       this.redraw();
       this.persist();
     }
 
     redo() {
       if (!this.redoStack.length) return;
-      this.strokes.push(this.redoStack.pop());
+      this.undoStack.push(structuredClone(this.strokes));
+      this.strokes = this.redoStack.pop();
       this.redraw();
       this.persist();
     }
 
     clearPage() {
       if (!this.strokes.length) return;
+      this.pushUndoSnapshot();
       this.strokes = [];
-      this.redoStack = [];
       this.redraw();
       this.persist();
       this.toast?.('Đã xóa nét viết trên trang này');
+    }
+
+    findBookLineCenterNy(clientX, clientY, stageRect) {
+      const contentEl = document.getElementById('chapter-content');
+      if (!contentEl || stageRect.height <= 0) return null;
+      let range = null;
+      try {
+        if (document.caretRangeFromPoint) {
+          range = document.caretRangeFromPoint(clientX, clientY);
+        } else if (document.caretPositionFromPoint) {
+          const pos = document.caretPositionFromPoint(clientX, clientY);
+          if (pos) {
+            range = document.createRange();
+            range.setStart(pos.offsetNode, pos.offset);
+            range.collapse(true);
+          }
+        }
+        if (!range) return null;
+        const node = range.startContainer;
+        if (!node || node.nodeType !== Node.TEXT_NODE || !contentEl.contains(node)) return null;
+        const txt = node.nodeValue || '';
+        if (!txt.trim()) return null;
+        const s = Math.max(0, Math.min(range.startOffset, txt.length - 1));
+        const charRange = document.createRange();
+        charRange.setStart(node, s);
+        charRange.setEnd(node, Math.min(txt.length, s + 1));
+        const cRect = charRange.getBoundingClientRect();
+        if (cRect.height > 4 && Math.abs((cRect.top + cRect.bottom) * 0.5 - clientY) <= 22) {
+          const centerY = (cRect.top + cRect.bottom) * 0.5;
+          return Math.max(0, Math.min(1, (centerY - stageRect.top) / stageRect.height));
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    snapCurrentHighlighterStraight() {
+      if (!this.drawing || !this.currentStroke || this.currentStroke.tool !== 'highlighter' || this._strokeSnappedStraight) {
+        return;
+      }
+      const pts = this.currentStroke.points;
+      if (!pts || pts.length < 2 || !this._lastMoveClient || !this.stage) return;
+
+      const rect = this.stage.getBoundingClientRect();
+      const startPt = pts[0];
+      const endNx = this._lastMoveClient.nx;
+      const endNy = this._lastMoveClient.ny;
+      const dxPx = (endNx - startPt[0]) * rect.width;
+      const dyPx = (endNy - startPt[1]) * rect.height;
+      const totalPx = Math.hypot(dxPx, dyPx);
+      if (totalPx < 16) return;
+
+      const angleDeg = Math.abs((Math.atan2(dyPx, Math.abs(dxPx)) * 180) / Math.PI);
+      this._strokeSnappedStraight = true;
+
+      let startSnappedNy = startPt[1];
+      let endSnappedNy = endNy;
+
+      // Within ±18° of horizontal -> snap cleanly along the printed book text line ("nắn thẳng dòng")!
+      if (angleDeg <= 18) {
+        const lineNy = this._hlStartClient
+          ? this.findBookLineCenterNy(this._hlStartClient.x, this._hlStartClient.y, rect)
+          : null;
+        const levelNy = lineNy != null ? lineNy : Number(((startPt[1] + endNy) * 0.5).toFixed(4));
+        this._snappedLockedNy = Number(levelNy.toFixed(4));
+        startSnappedNy = this._snappedLockedNy;
+        endSnappedNy = this._snappedLockedNy;
+      } else {
+        this._snappedLockedNy = null;
+      }
+
+      this.currentStroke.points = [
+        [startPt[0], startSnappedNy, 0.55],
+        [Number(endNx.toFixed(4)), Number(endSnappedNy.toFixed(4)), 0.55],
+      ];
+      this.redraw();
+      try {
+        navigator.vibrate?.(12);
+      } catch (_) {}
+      this.canvas?.classList.remove('hl-snap-pulse');
+      void this.canvas?.offsetWidth;
+      this.canvas?.classList.add('hl-snap-pulse');
     }
 
     getActivePalette() {
@@ -842,15 +1042,20 @@
     }
 
     syncToolbarUI() {
-      const isEraser = this.tool === 'eraser';
-      const isHighlighter = this.tool === 'highlighter';
+      const effectiveTool = this.barrelEraserActive ? 'eraser' : this.tool;
+      const isEraser = effectiveTool === 'eraser';
+      const isHighlighter = effectiveTool === 'highlighter';
 
       document.querySelectorAll('.pen-tool-btn').forEach((btn) => {
-        btn.classList.toggle('active', this.normalizeTool(btn.dataset.pentool) === this.tool);
+        btn.classList.toggle('active', this.normalizeTool(btn.dataset.pentool) === effectiveTool);
       });
 
       const titleEl = document.getElementById('pen-detail-title');
-      if (titleEl) titleEl.textContent = TOOL_META[this.tool]?.label || 'Bút S Pen';
+      if (titleEl) {
+        titleEl.textContent = this.barrelEraserActive
+          ? 'Tẩy (Đang giữ nút S Pen)'
+          : TOOL_META[this.tool]?.label || 'Bút S Pen';
+      }
 
       const swatchDot = document.getElementById('pen-expand-dot');
       if (swatchDot) {
@@ -918,7 +1123,7 @@
       }
       const undoBtn = document.getElementById('pen-undo-btn');
       const redoBtn = document.getElementById('pen-redo-btn');
-      if (undoBtn) undoBtn.disabled = this.strokes.length === 0;
+      if (undoBtn) undoBtn.disabled = this.undoStack.length === 0 && this.strokes.length === 0;
       if (redoBtn) redoBtn.disabled = this.redoStack.length === 0;
 
       this.syncQuickPillUI();
@@ -934,16 +1139,41 @@
       const ro = new ResizeObserver(() => {
         if (!this.bookId) return;
         this.resizeCanvas();
+        if (this.active) this.updateStageClearance();
         this.redraw();
       });
       ro.observe(this.stage);
 
-      // Wacom EMR S Pen Hover & Proximity Detection (Galaxy S25 Ultra & Galaxy Book5 360)
+      window.addEventListener('resize', () => {
+        if (this.active && this.bookId) this.updateStageClearance();
+      });
+
+      // Close pen-detail-panel when tapping anywhere outside pen-detail-panel and pen-toolbar
+      document.addEventListener('pointerdown', (e) => {
+        if (!this.detailOpen) return;
+        if (e.target.closest('#pen-detail-panel, #pen-toolbar')) return;
+        this.setDetailOpen(false);
+      });
+
+      // Suppress browser/OS context menu when pressing S Pen side barrel button on page!
+      this.stage.addEventListener(
+        'contextmenu',
+        (e) => {
+          if (this.penHovering || this.penDown || this.drawing || this.barrelEraserActive) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        },
+        { capture: true }
+      );
+
+      // Wacom EMR S Pen Hover & Side-Button Eraser Detection (Galaxy S25 Ultra & Galaxy Book5 360)
       const onStagePenHover = (e) => {
         if (!this.bookId || e.pointerType !== 'pen') return;
         this.penHovering = true;
         this.lastPenEventAt = Date.now();
         this.setPenInRange(true);
+        this.updateEraserCursor(e, false);
         this.onPenDetected?.();
         if (!this.spenDetectedInSession) {
           this.spenDetectedInSession = true;
@@ -967,6 +1197,7 @@
         (e) => {
           if (e.pointerType === 'pen') {
             this.penHovering = false;
+            this.updateEraserCursor(null, true);
             if (!this.drawing && !this.penDown) {
               this.setPenInRange(false);
             }
@@ -1004,7 +1235,7 @@
               this.syncQuickPillUI();
               if (!this._shownSeamlessHint) {
                 this._shownSeamlessHint = true;
-                this.toast?.('Bút S Pen: Ghi chú trực tiếp · Ngón tay: Lật trang');
+                this.toast?.('Bút S Pen: Ghi chú trực tiếp · Ấn nút S Pen: Tẩy · Ngón tay: Lật trang');
               }
             }
             this.wakeQuickPill();
@@ -1030,19 +1261,29 @@
           this.activePointerId = e.pointerId;
           this.activePointerType = e.pointerType || '';
           this.erasedDuringGesture = false;
+          clearTimeout(this._straightenHoldTimer);
+          this._strokeSnappedStraight = false;
+          this._snappedLockedNy = null;
+          this._holdAnchor = { x: e.clientX, y: e.clientY };
+          this._hlStartClient = { x: e.clientX, y: e.clientY };
+          this._lastMoveClient = { x: e.clientX, y: e.clientY, nx, ny };
+
           try {
             this.stage.setPointerCapture?.(e.pointerId);
           } catch (_) {}
 
-          const isEraser = this.tool === 'eraser' || e.buttons === 32 || e.button === 5 || (e.buttons & 32) === 32;
+          const sideEraser = this.isSPenSideButtonPressed(e);
+          const isEraser = this.tool === 'eraser' || sideEraser;
           this._gestureIsEraser = isEraser;
+          this.updateEraserCursor(e, false);
 
           if (isEraser) {
+            this._preEraseSnapshot = structuredClone(this.strokes);
             this.eraseAtNormalized(nx, ny);
             return;
           }
 
-          this.redoStack = [];
+          this.pushUndoSnapshot();
           this.currentStroke = {
             id: uid('s'),
             tool: this.tool,
@@ -1060,6 +1301,19 @@
         if (!this.drawing || e.pointerId !== this.activePointerId) return;
         if (e.pointerType === 'pen') {
           this.lastPenEventAt = Date.now();
+          // Also allow pressing S Pen side button mid-stroke to immediately switch into Eraser!
+          if (!this._gestureIsEraser && this.isSPenSideButtonPressed(e)) {
+            clearTimeout(this._straightenHoldTimer);
+            if (this.currentStroke) {
+              // Discard the partial stroke started right as button was pressed
+              this.currentStroke = null;
+              if (this.undoStack.length) this.undoStack.pop();
+              this.redraw();
+            }
+            this._gestureIsEraser = true;
+            this._preEraseSnapshot = structuredClone(this.strokes);
+          }
+          this.updateEraserCursor(e, false);
         }
         e.preventDefault();
         e.stopPropagation();
@@ -1070,6 +1324,7 @@
         for (const ev of events) {
           const nx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / Math.max(1, rect.width)));
           const ny = Math.max(0, Math.min(1, (ev.clientY - rect.top) / Math.max(1, rect.height)));
+          this._lastMoveClient = { x: ev.clientX, y: ev.clientY, nx, ny };
 
           if (this._gestureIsEraser) {
             this.eraseAtNormalized(nx, ny);
@@ -1079,17 +1334,41 @@
           if (!this.currentStroke) continue;
           const pts = this.currentStroke.points;
 
-          // Straight Highlighter mode (just like Samsung Notes Straight Marker!)
-          if (this.currentStroke.tool === 'highlighter' && this.straightHighlighter) {
+          // 1. Live Straightened Highlighter (either explicit Straight Highlighter mode OR Draw-and-Hold snapped!)
+          if (this.currentStroke.tool === 'highlighter' && (this.straightHighlighter || this._strokeSnappedStraight)) {
             const start = pts[0];
-            // Snap almost-horizontal lines cleanly to exact horizontal
             const dyPx = Math.abs((ny - start[1]) * rect.height);
             const dxPx = Math.abs((nx - start[0]) * rect.width);
-            const snappedNy = dxPx > 24 && dyPx < 14 ? start[1] : ny;
-            const endPt = [Number(nx.toFixed(4)), Number(snappedNy.toFixed(4)), 0.52];
+            const angleDeg = Math.abs((Math.atan2(dyPx, Math.max(1, dxPx)) * 180) / Math.PI);
+            let snappedNy = ny;
+            if (this._strokeSnappedStraight) {
+              snappedNy = angleDeg <= 18 ? (this._snappedLockedNy ?? start[1]) : ny;
+            } else if (dxPx > 20 && angleDeg <= 16) {
+              snappedNy = start[1];
+            }
+            const endPt = [Number(nx.toFixed(4)), Number(snappedNy.toFixed(4)), 0.55];
             if (pts.length === 1) pts.push(endPt);
             else pts[1] = endPt;
             continue;
+          }
+
+          // 2. Draw-and-Hold Straightener Detection for Freehand Highlighter!
+          // When drawing highlighter and holding S Pen steady (~340ms) before lifting -> snap straight along text line!
+          if (this.currentStroke.tool === 'highlighter') {
+            const start = pts[0];
+            const totalDistPx = Math.hypot((nx - start[0]) * rect.width, (ny - start[1]) * rect.height);
+            const moveFromAnchor = this._holdAnchor
+              ? Math.hypot(ev.clientX - this._holdAnchor.x, ev.clientY - this._holdAnchor.y)
+              : 999;
+            if (moveFromAnchor > 5.5) {
+              this._holdAnchor = { x: ev.clientX, y: ev.clientY };
+              clearTimeout(this._straightenHoldTimer);
+              if (totalDistPx >= 18) {
+                this._straightenHoldTimer = setTimeout(() => {
+                  this.snapCurrentHighlighterStraight();
+                }, 340);
+              }
+            }
           }
 
           const last = pts[pts.length - 1];
@@ -1105,16 +1384,24 @@
 
       const handleUp = (e) => {
         if (!this.drawing || e.pointerId !== this.activePointerId) return;
+        clearTimeout(this._straightenHoldTimer);
         const wasPen = this.activePointerType === 'pen' || e.pointerType === 'pen';
         this.drawing = false;
         this.penDown = false;
         this.activePointerId = null;
         this.activePointerType = '';
+        this._preEraseSnapshot = null;
+        const wasEraser = this._gestureIsEraser;
+        this._gestureIsEraser = false;
+
         if (wasPen) {
           this.lastPenEventAt = Date.now();
           this.lastPenStrokeEndAt = Date.now();
           this.setPenInRange(this.isPenHoverFresh());
+          this.updateEraserCursor(e, !this.isSPenSideButtonPressed(e) && this.tool !== 'eraser');
           this.wakeQuickPill();
+        } else {
+          this.updateEraserCursor(null, true);
         }
         try {
           this.stage.releasePointerCapture?.(e.pointerId);
@@ -1123,7 +1410,7 @@
           this.canvas.releasePointerCapture?.(e.pointerId);
         } catch (_) {}
 
-        if (this._gestureIsEraser) {
+        if (wasEraser) {
           if (this.erasedDuringGesture) {
             this.persist();
             this.syncToolbarUI();
@@ -1134,6 +1421,8 @@
         if (this.currentStroke && this.currentStroke.points.length > 0) {
           this.strokes.push(this.currentStroke);
           this.currentStroke = null;
+          this._strokeSnappedStraight = false;
+          this._snappedLockedNy = null;
           this.redraw();
           this.persist();
           this.syncToolbarUI();

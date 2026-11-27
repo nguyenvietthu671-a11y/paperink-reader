@@ -367,6 +367,10 @@
       </div>
       <!-- Samsung Notes-style S Pen pressure-sensitive Ink Layer -->
       <canvas id="ink-canvas" class="ink-canvas" aria-label="Bảng viết tay S Pen trên trang sách"></canvas>
+      <!-- S Pen Side-Button / Eraser Live Ring Indicator -->
+      <div id="spen-eraser-cursor" class="spen-eraser-cursor hidden" aria-hidden="true">
+        <span class="spen-eraser-badge">Tẩy</span>
+      </div>
     </div>
 
     <!-- Optional Pill Reading Progress Bar -->
@@ -453,7 +457,10 @@
         </div>
 
         <label id="pen-highlighter-row" class="pen-straight-row hidden" for="pen-straight-hl">
-          <span>Bút dạ quang kẻ thẳng (Straight Highlighter)</span>
+          <div>
+            <span>Luôn kẻ thẳng mọi nét dạ quang</span>
+            <small style="display:block;font-size:0.68rem;color:var(--ink-muted);font-weight:400">Hoặc kẻ tự do rồi nhấn giữ S Pen 0.3s chưa thả để tự nắn thẳng dòng</small>
+          </div>
           <input id="pen-straight-hl" class="ios-switch" type="checkbox" />
         </label>
       </div>
@@ -929,7 +936,7 @@
             </div>
             <div class="inset-row two-col-settings">
               <div>
-                <div class="mini-label">Lề trang</div>
+                <div class="mini-label">Lề nhanh</div>
                 <div class="ios-segmented compact">
                   <button class="seg-opt margin-pill" data-margin="narrow" type="button">Hẹp</button>
                   <button class="seg-opt margin-pill" data-margin="medium" type="button">Vừa</button>
@@ -941,6 +948,27 @@
                 <div class="ios-segmented compact">
                   <button class="seg-opt align-pill" data-align="justify" type="button">Đều</button>
                   <button class="seg-opt align-pill" data-align="left" type="button">Trái</button>
+                </div>
+              </div>
+            </div>
+            <div class="inset-row stack-item margin-four-box">
+              <div class="mini-label">Chỉnh lề độc lập 4 hướng (Trên · Dưới · Trái · Phải)</div>
+              <div class="margin-four-grid">
+                <div class="margin-side-item">
+                  <div class="slider-meta"><label for="set-margin-top">Lề trên</label><strong id="val-margin-top" class="tabular">14px</strong></div>
+                  <input id="set-margin-top" class="apple-range compact-range" type="range" min="0" max="64" step="2" value="14" />
+                </div>
+                <div class="margin-side-item">
+                  <div class="slider-meta"><label for="set-margin-bottom">Lề dưới</label><strong id="val-margin-bottom" class="tabular">16px</strong></div>
+                  <input id="set-margin-bottom" class="apple-range compact-range" type="range" min="0" max="64" step="2" value="16" />
+                </div>
+                <div class="margin-side-item">
+                  <div class="slider-meta"><label for="set-margin-left">Lề trái</label><strong id="val-margin-left" class="tabular">24px</strong></div>
+                  <input id="set-margin-left" class="apple-range compact-range" type="range" min="6" max="80" step="2" value="24" />
+                </div>
+                <div class="margin-side-item">
+                  <div class="slider-meta"><label for="set-margin-right">Lề phải</label><strong id="val-margin-right" class="tabular">24px</strong></div>
+                  <input id="set-margin-right" class="apple-range compact-range" type="range" min="6" max="80" step="2" value="24" />
                 </div>
               </div>
             </div>
@@ -1109,12 +1137,20 @@
   <div id="book-info-modal" class="modal-panel large-modal" role="dialog" aria-modal="true" aria-labelledby="book-info-title">
     <div class="sheet-header compact">
       <h2 id="book-info-title">Thông tin &amp; Đánh giá sách</h2>
-      <button class="sheet-close-circle" id="book-info-close" type="button" aria-label="Đóng thông tin sách">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
+      <div class="modal-header-actions">
+        <button class="sheet-close-circle" id="book-info-more-btn" type="button" title="Tùy chọn hiển thị &amp; chỉnh sửa" aria-label="Mở menu tùy chọn phụ" aria-haspopup="true">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        </button>
+        <button class="sheet-close-circle" id="book-info-close" type="button" aria-label="Đóng thông tin sách">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
     </div>
     <div id="book-info-body" class="sheet-content"></div>
   </div>
+
+  <!-- Secondary Options Popover (Decluttered Phông chữ, Cỡ khung mô tả & Tác vụ phụ) -->
+  <div id="desc-secondary-popover" class="desc-secondary-popover glass-chrome hidden" role="dialog" aria-label="Tùy chọn mô tả và thông tin"></div>
 
   <!-- ==================== DICTIONARY BOTTOM SHEET ==================== -->
   <div id="dict-backdrop" class="sheet-backdrop"></div>
