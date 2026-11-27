@@ -314,6 +314,59 @@ async function main() {
         return;
       }
 
+      // API: Smart 1-Click Auto-Update EPUBs from Machine (Adds ONLY new books/series, skips all duplicates!)
+      if (req.method === 'POST' && pathname === '/api/library/auto-update') {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const extraDirs = Array.isArray(body?.extraDirs) ? body.extraDirs : [];
+        const updateRes = await library.autoUpdateFromMachine({ extraDirs });
+
+        // Unhide any newly added books if previously hidden, and trigger background Goodreads enrich for new items
+        if (updateRes.addedCount > 0) {
+          let stateChanged = false;
+          for (const b of updateRes.addedBooks || []) {
+            if (b?.id && stateStore.state.hiddenBookIds?.[b.id]) {
+              delete stateStore.state.hiddenBookIds[b.id];
+              stateChanged = true;
+            }
+          }
+          if (stateChanged) stateStore.scheduleSave();
+
+          goodreads
+            .enrichLibraryAll(library, stateStore, { forceAllBooks: false })
+            .then(() => cloudSync.syncPush())
+            .catch(() => {});
+        }
+
+        sendJson(res, 200, updateRes);
+        return;
+      }
+
+      // API: Get / Save PC Auto-Update Scan Folders Config
+      if (req.method === 'GET' && pathname === '/api/library/update-config') {
+        const cfg = await library.loadUpdateConfig();
+        const activeDirs = await library.getCandidateScanDirs();
+        sendJson(res, 200, {
+          ok: true,
+          booksDir: BOOKS_DIR,
+          config: cfg,
+          activeScanDirs: activeDirs,
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && pathname === '/api/library/update-config') {
+        const body = await readJsonBody(req).catch(() => ({}));
+        const saved = await library.saveUpdateConfig(body);
+        const activeDirs = await library.getCandidateScanDirs();
+        sendJson(res, 200, {
+          ok: true,
+          booksDir: BOOKS_DIR,
+          config: saved,
+          activeScanDirs: activeDirs,
+        });
+        return;
+      }
+
       // API: Single Book Goodreads Description & Metadata Lookup
       if (req.method === 'GET' && pathname === '/api/goodreads/book') {
         const title = urlObj.searchParams.get('title') || '';
@@ -411,7 +464,7 @@ async function main() {
         return;
       }
 
-      // API: Upload EPUB directly into PC Online library folder (no bloated device storage needed!)
+      // API: Upload EPUB directly into PC Online library folder (with strict anti-duplicate check!)
       if (req.method === 'POST' && pathname === '/api/books/upload') {
         const rawHeaderName =
           req.headers['x-filename'] || req.headers['x-file-name'] || urlObj.searchParams.get('filename') || '';
@@ -422,19 +475,37 @@ async function main() {
           return;
         }
 
+        const tmpPath = path.join(DATA_DIR, `.upload_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.epub`);
+        await fsp.writeFile(tmpPath, buf);
+
+        let dupInfo = { duplicate: false, matchedBook: null };
+        try {
+          dupInfo = await library.checkCandidateDuplicate(tmpPath, safeName);
+        } catch (_) {}
+
+        if (dupInfo.duplicate) {
+          await fsp.unlink(tmpPath).catch(() => {});
+          const publicList = library.getPublicList();
+          const matchedPublic =
+            (dupInfo.matchedBook?.id && publicList.find((b) => b.id === dupInfo.matchedBook.id)) || null;
+          sendJson(res, 200, {
+            ok: true,
+            duplicate: true,
+            fileName: dupInfo.matchedBook?.fileName || safeName,
+            book: matchedPublic,
+            count: library.books.length,
+            books: publicList,
+          });
+          return;
+        }
+
         let targetName = safeName;
         let targetPath = path.join(BOOKS_DIR, targetName);
         const parsedName = path.parse(safeName);
-        let duplicateOfExisting = false;
 
-        // Avoid overwriting a different book with the same filename
         for (let suffix = 1; suffix <= 99; suffix++) {
           try {
-            const st = await fsp.stat(targetPath);
-            if (st.size === buf.length) {
-              duplicateOfExisting = true;
-              break;
-            }
+            await fsp.stat(targetPath);
             targetName = `${parsedName.name}_${suffix}${parsedName.ext}`;
             targetPath = path.join(BOOKS_DIR, targetName);
           } catch (_) {
@@ -442,16 +513,17 @@ async function main() {
           }
         }
 
-        if (!duplicateOfExisting) {
-          await fsp.writeFile(targetPath, buf);
-        }
+        await fsp.rename(tmpPath, targetPath).catch(async () => {
+          await fsp.copyFile(tmpPath, targetPath);
+          await fsp.unlink(tmpPath).catch(() => {});
+        });
 
         await library.scan();
         const uploadedBook =
           library.getPublicList().find((b) => b.fileName === targetName) || null;
         sendJson(res, 200, {
           ok: true,
-          duplicate: duplicateOfExisting,
+          duplicate: false,
           fileName: targetName,
           book: uploadedBook,
           count: library.books.length,

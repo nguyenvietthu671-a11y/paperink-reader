@@ -1109,6 +1109,188 @@
     return books;
   }
 
+  // ==================== SMART INCREMENTAL UPDATE & STRICT ANTI-DUPLICATE ENGINE ====================
+  function normalizeBookDedupTitle(rawTitle, rawSeries = '') {
+    let t = decodeEntities(String(rawTitle || '')).trim();
+    if (!t) return '';
+
+    // Strip leading series prefix like "Alex Cross 27 - Criss Cross" or "Dream Harbor 2: The Cinnamon Bun..."
+    if (rawSeries) {
+      const escS = rawSeries.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      t = t.replace(new RegExp(`^(?:the\\s+)?${escS}\\s*#?\\d+(?:\\.\\d+)?\\s*[:_\\-–—]+\\s*`, 'i'), '');
+    }
+    t = t.replace(/^[A-Za-z][A-Za-z\s'.]{2,28}\s+\d{1,2}\s*[:_\-–—]+\s*(?=[A-Z])/i, '');
+
+    // Strip parenthetical / bracketed series or edition suffixes
+    t = t
+      .replace(/\s*\([^)]*(?:#\d|book\s+\d|series|novel|mystery|thriller|edition|vol\.?\s*\d|z-lib|1lib)[^)]*\)/gi, '')
+      .replace(/\s*\[[^\]]*\]/g, '')
+      .replace(/\s*\(\d+\)\s*$/, '');
+
+    // Strip subtitle after ":" or " _ " when it's an edition/series/marketing subtitle
+    t = t.replace(
+      /\s*(?::|_|—|–|\s-\s)\s*(?:a\s+[\w\s'’-]{0,32}(?:novel|mystery|thriller|story|suspense|romance)|[\w\s'’-]*edition|tiktok\s+made\s+me\s+buy\s+it.*|book\s+\d+.*)$/i,
+      ''
+    );
+
+    return t
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '')
+      .trim();
+  }
+
+  function normalizeBookDedupAuthor(rawAuthor) {
+    const clean = normalizeAuthor(rawAuthor);
+    if (!clean || isUnknownAuthor(clean)) return 'unknown';
+    const primary = clean.split(',')[0].trim();
+    const toks = normalizePersonTokens(primary);
+    if (!toks.length) return primary.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'unknown';
+    return [...toks].sort().join('_');
+  }
+
+  function normalizeEpubStem(fileName) {
+    let s = String(fileName || '').replace(/\.epub$/i, '').trim();
+    if (!s) return '';
+    s = s
+      .replace(/^_?oceanofpdf\.com_/i, '')
+      .replace(/\s*\(z-library[^)]*\)/gi, '')
+      .replace(/\s*--\s*[0-9a-f]{24,36}.*$/i, '')
+      .replace(/\s*--\s*anna[’']?s\s*archive.*$/i, '')
+      .replace(/\s*\(\d+\)\s*$/g, '')
+      .replace(/(?:_|\s-\s)copy\s*$/i, '')
+      .replace(/_\d{1,2}$/, '');
+    return s
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '')
+      .trim();
+  }
+
+  function getBookDedupKeys(book = {}) {
+    const keys = [];
+    if (book.sha1 && typeof book.sha1 === 'string') {
+      keys.push(`sha1:${book.sha1.toLowerCase()}`);
+    }
+    const normTitle = normalizeBookDedupTitle(book.title, book.series);
+    const normAuthor = normalizeBookDedupAuthor(book.author);
+    if (normTitle.length >= 2 && normAuthor !== 'unknown') {
+      keys.push(`ta:${normTitle}::${normAuthor}`);
+    } else if (normTitle.length >= 6) {
+      keys.push(`to:${normTitle}`);
+    }
+    const stem = normalizeEpubStem(book.fileName || '');
+    if (stem.length >= 6) {
+      keys.push(`fn:${stem}`);
+    }
+    return keys;
+  }
+
+  function scoreBookQuality(b, preferredIds) {
+    let score = 0;
+    if (preferredIds && b.id && preferredIds.has(b.id)) score += 1000;
+    if (b.isOffline) score += 200;
+    if (b.hasCover || b.coverUrl || b.coverDisplayUrl) score += 50;
+    if (b.goodreadsRating) score += 35;
+    if ((b.description || '').length >= 160) score += 25;
+    if (b.series && b.seriesIndex != null) score += 15;
+    if (!/\(\d+\)\.epub$/i.test(b.fileName || '') && !/_\d\.epub$/i.test(b.fileName || '')) score += 12;
+    return score;
+  }
+
+  function mergeDuplicateMetadataIntoWinner(winner, loser) {
+    if (!winner || !loser) return winner;
+    if ((!winner.description || winner.description.length < 80) && loser.description && loser.description.length > (winner.description || '').length) {
+      winner.description = loser.description;
+      if (loser.descSource) winner.descSource = loser.descSource;
+    }
+    if (!winner.goodreadsRating && loser.goodreadsRating) {
+      winner.goodreadsRating = loser.goodreadsRating;
+    }
+    if (!winner.goodreadsUrl && loser.goodreadsUrl) {
+      winner.goodreadsUrl = loser.goodreadsUrl;
+    }
+    if (!winner.series && loser.series) {
+      winner.series = loser.series;
+    }
+    if (winner.seriesIndex == null && loser.seriesIndex != null) {
+      winner.seriesIndex = loser.seriesIndex;
+    }
+    return winner;
+  }
+
+  function deduplicateBooksCatalog(books, preferredIds = new Set()) {
+    if (!Array.isArray(books) || books.length <= 1) {
+      return { books: Array.isArray(books) ? books : [], removedCount: 0, aliasMap: new Map() };
+    }
+
+    const prefSet = preferredIds instanceof Set ? preferredIds : new Set(preferredIds || []);
+    // Sort highest quality first so the strongest edition wins naturally
+    const sorted = [...books].sort((a, b) => {
+      const diff = scoreBookQuality(b, prefSet) - scoreBookQuality(a, prefSet);
+      if (diff !== 0) return diff;
+      return (b.size || 0) - (a.size || 0);
+    });
+
+    const keyToWinner = new Map();
+    const uniqueBooks = [];
+    const aliasMap = new Map();
+    let removedCount = 0;
+
+    for (const book of sorted) {
+      const keys = getBookDedupKeys(book);
+      let matchedWinner = null;
+      for (const k of keys) {
+        if (keyToWinner.has(k)) {
+          matchedWinner = keyToWinner.get(k);
+          break;
+        }
+      }
+
+      if (matchedWinner) {
+        removedCount++;
+        mergeDuplicateMetadataIntoWinner(matchedWinner, book);
+        if (book.id && matchedWinner.id && book.id !== matchedWinner.id) {
+          aliasMap.set(book.id, matchedWinner.id);
+        }
+        // Register all keys of loser to winner as well
+        for (const k of keys) {
+          if (!keyToWinner.has(k)) keyToWinner.set(k, matchedWinner);
+        }
+      } else {
+        uniqueBooks.push(book);
+        for (const k of keys) {
+          keyToWinner.set(k, book);
+        }
+      }
+    }
+
+    return { books: uniqueBooks, removedCount, aliasMap };
+  }
+
+  function buildCatalogDedupIndex(catalogBooks = []) {
+    const map = new Map();
+    for (const b of catalogBooks || []) {
+      for (const k of getBookDedupKeys(b)) {
+        if (!map.has(k)) map.set(k, b);
+      }
+    }
+    return map;
+  }
+
+  function isBookDuplicateOfCatalog(candidate, catalogOrIndex) {
+    const idx = catalogOrIndex instanceof Map ? catalogOrIndex : buildCatalogDedupIndex(catalogOrIndex);
+    const keys = getBookDedupKeys(candidate);
+    for (const k of keys) {
+      if (idx.has(k)) {
+        return { duplicate: true, matchedBook: idx.get(k), matchedKey: k };
+      }
+    }
+    return { duplicate: false, matchedBook: null, matchedKey: '' };
+  }
+
   function analyzeBookMetadata(raw = {}) {
     const fileFallback = parseFilenameMeta(raw.fileName || '');
 
@@ -1671,5 +1853,12 @@
     getGenreTaxonomyDescription,
     GENRE_TAXONOMY_DESCRIPTIONS,
     unifyLibraryCatalog,
+    normalizeBookDedupTitle,
+    normalizeBookDedupAuthor,
+    normalizeEpubStem,
+    getBookDedupKeys,
+    deduplicateBooksCatalog,
+    buildCatalogDedupIndex,
+    isBookDuplicateOfCatalog,
   };
 });

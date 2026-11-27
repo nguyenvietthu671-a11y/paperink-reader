@@ -2508,6 +2508,21 @@
       if (window.PaperInkMetadata?.unifyLibraryCatalog) {
         window.PaperInkMetadata.unifyLibraryCatalog(visible);
       }
+      if (window.PaperInkMetadata?.deduplicateBooksCatalog) {
+        const preferredIds = new Set();
+        for (const bucket of [
+          this.state.progress,
+          this.state.bookmarks,
+          this.state.highlights,
+          this.state.inkNotes,
+          this.state.bookReviews,
+        ]) {
+          if (bucket && typeof bucket === 'object') {
+            for (const k of Object.keys(bucket)) preferredIds.add(k);
+          }
+        }
+        return window.PaperInkMetadata.deduplicateBooksCatalog(visible, preferredIds).books;
+      }
       return visible;
     }
 
@@ -5184,21 +5199,51 @@
       }
     }
 
-    async importLocalEpubFiles(files) {
-      if (!files || !files.length) return;
+    async importLocalEpubFiles(files, { silentSummary = false } = {}) {
+      if (!files || !files.length) return { addedCount: 0, addedBooks: [], skippedDuplicates: 0 };
       const validFiles = Array.from(files).filter((f) => /\.epub$/i.test(f.name));
       if (!validFiles.length) {
-        this.toast('Vui lòng chọn tệp .epub hợp lệ');
-        return;
+        if (!silentSummary) this.toast('Vui lòng chọn tệp .epub hợp lệ');
+        return { addedCount: 0, addedBooks: [], skippedDuplicates: 0 };
       }
 
-      // When connected to PC Server: upload EPUBs straight into PC Online library pool (no heavy phone storage!)
+      const metaMod = window.PaperInkMetadata;
+      const existingCatalog = this.getMergedBooks();
+      const dedupIdx = metaMod?.buildCatalogDedupIndex
+        ? metaMod.buildCatalogDedupIndex(existingCatalog)
+        : new Map();
+
+      let skippedDuplicates = 0;
+
+      // Pre-filter fast filename stem + exact byte size matches so already-existing books skip in 0ms!
+      const candidates = [];
+      for (const file of validFiles) {
+        if (metaMod?.normalizeEpubStem) {
+          const stemKey = `fn:${metaMod.normalizeEpubStem(file.name)}`;
+          if (stemKey.length > 8 && dedupIdx.has(stemKey)) {
+            skippedDuplicates++;
+            continue;
+          }
+        }
+        candidates.push(file);
+      }
+
+      if (candidates.length === 0) {
+        if (!silentSummary) {
+          this.toast(`Bỏ qua ${skippedDuplicates} cuốn EPUB trùng — Đã có sẵn trong thư viện!`);
+        }
+        return { addedCount: 0, addedBooks: [], skippedDuplicates };
+      }
+
+      // When connected to PC Server: upload EPUBs straight into PC Online library pool (server also checks SHA-1 + Title/Author!)
       if (this.isOnlineToServer) {
-        this.toast(`Đang tải ${validFiles.length} cuốn lên mục Online & tự động gắn nhãn…`);
+        if (!silentSummary) {
+          this.toast(`Đang kiểm tra & cập nhật ${candidates.length} tệp EPUB…`);
+        }
         let uploaded = 0;
         let lastBooks = null;
         const uploadedBooks = [];
-        for (const file of validFiles) {
+        for (const file of candidates) {
           try {
             const res = await fetch(this.apiUrl('/api/books/upload'), {
               method: 'POST',
@@ -5211,41 +5256,86 @@
             if (!res.ok) continue;
             const data = await res.json();
             if (data.ok) {
+              if (Array.isArray(data.books)) lastBooks = data.books;
+              if (data.duplicate) {
+                skippedDuplicates++;
+                continue;
+              }
               uploaded++;
               if (data.book?.id) {
                 uploadedBooks.push(data.book);
                 if (this.state.hiddenBookIds?.[data.book.id]) {
                   delete this.state.hiddenBookIds[data.book.id];
                 }
+                if (metaMod?.getBookDedupKeys) {
+                  for (const k of metaMod.getBookDedupKeys(data.book)) dedupIdx.set(k, data.book);
+                }
               }
-              if (Array.isArray(data.books)) lastBooks = data.books;
             }
           } catch (err) {
             console.error('Upload EPUB to PC Online error:', err);
           }
         }
-        if (uploaded > 0) {
-          if (lastBooks) {
-            this.serverBooks = lastBooks;
-            this.knownServerBookIds = new Set(lastBooks.map((b) => b.id));
-            window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
-          }
+        if (lastBooks) {
+          this.serverBooks = lastBooks;
+          this.knownServerBookIds = new Set(lastBooks.map((b) => b.id));
+          window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+        }
+        if (uploaded > 0 || skippedDuplicates > 0) {
           this.scheduleSync();
           this.renderCurrentRoute();
-          this.toast(`Đã tải ${uploaded} cuốn vào mục Online & gắn nhãn tự động!`);
-          if (uploadedBooks.length) {
-            this.autoEnrichNewBooks(uploadedBooks, { silent: false });
+          if (!silentSummary) {
+            if (uploaded > 0) {
+              this.toast(
+                `Đã thêm ${uploaded} sách mới vào thư viện${
+                  skippedDuplicates > 0 ? ` · Bỏ qua ${skippedDuplicates} bản trùng` : ''
+                }!`
+              );
+            } else {
+              this.toast(`Không có sách mới — Đã bỏ qua ${skippedDuplicates} bản trùng!`);
+            }
           }
-          return;
+          if (uploadedBooks.length) {
+            this.autoEnrichNewBooks(uploadedBooks, { silent: silentSummary });
+          }
+          return { addedCount: uploaded, addedBooks: uploadedBooks, skippedDuplicates };
         }
       }
 
-      // Fallback when offline / standalone web: save directly to local Offline IndexedDB
+      // Fallback when offline / standalone web: save ONLY non-duplicate EPUBs into local Offline IndexedDB!
       let imported = 0;
       const importedBooks = [];
-      for (const file of validFiles) {
+      for (const file of candidates) {
+        let parsed = null;
         try {
-          const parsed = await window.PaperInkEpub.loadFromBlob(file, file.name);
+          parsed = await window.PaperInkEpub.loadFromBlob(file, file.name);
+          const analyzed = metaMod?.analyzeBookMetadata
+            ? metaMod.analyzeBookMetadata({
+                ...parsed.meta,
+                fileName: file.name,
+                subjects: parsed.meta.genres,
+                size: file.size,
+              })
+            : parsed.meta;
+
+          const candObj = {
+            title: analyzed.title || parsed.meta.title || file.name.replace(/\.epub$/i, ''),
+            author: analyzed.author || parsed.meta.author || 'Unknown Author',
+            series: analyzed.series || parsed.meta.series || '',
+            seriesIndex: analyzed.seriesIndex ?? parsed.meta.seriesIndex ?? null,
+            fileName: file.name,
+            size: file.size,
+          };
+
+          if (metaMod?.isBookDuplicateOfCatalog) {
+            const dup = metaMod.isBookDuplicateOfCatalog(candObj, dedupIdx);
+            if (dup.duplicate) {
+              skippedDuplicates++;
+              parsed.destroy();
+              continue;
+            }
+          }
+
           const coverBlob = await parsed.getCoverBlob();
           const id = `local_${file.name.replace(/[^a-z0-9]/gi, '_').slice(0, 24)}_${file.size}`;
           if (this.state.hiddenBookIds?.[id]) {
@@ -5253,12 +5343,12 @@
           }
           const rec = {
             id,
-            title: parsed.meta.title || file.name.replace(/\.epub$/i, ''),
-            author: parsed.meta.author || 'Unknown Author',
-            series: parsed.meta.series || '',
-            seriesIndex: parsed.meta.seriesIndex ?? null,
-            genres: Array.isArray(parsed.meta.genres) ? parsed.meta.genres : [],
-            tags: Array.isArray(parsed.meta.tags) ? parsed.meta.tags : [],
+            title: candObj.title,
+            author: candObj.author,
+            series: candObj.series,
+            seriesIndex: candObj.seriesIndex,
+            genres: Array.isArray(analyzed.genres) ? analyzed.genres : parsed.meta.genres || [],
+            tags: Array.isArray(analyzed.tags) ? analyzed.tags : parsed.meta.tags || [],
             description: parsed.meta.description || '',
             language: parsed.meta.language || 'en',
             fileName: file.name,
@@ -5269,31 +5359,200 @@
             epubBlob: file,
           };
           await window.PaperInkDB.saveOfflineBook(rec);
+          if (metaMod?.getBookDedupKeys) {
+            for (const k of metaMod.getBookDedupKeys(rec)) dedupIdx.set(k, rec);
+          }
           importedBooks.push(rec);
           parsed.destroy();
           imported++;
         } catch (err) {
+          parsed?.destroy?.();
           console.error('Import EPUB error:', err);
         }
       }
+
       if (imported > 0) {
         await this.reloadOfflineMeta();
         this.renderCurrentRoute();
-        const first = importedBooks[0];
-        const summaryBits = [];
-        if (imported === 1 && first) {
-          if (first.author && !/^unknown/i.test(first.author)) summaryBits.push(first.author);
-          if (first.series) summaryBits.push(`Bộ ${first.series}`);
-          if (first.genres?.[0]) summaryBits.push(first.genres[0]);
+        if (!silentSummary) {
+          this.toast(
+            `Đã thêm ${imported} sách EPUB mới${
+              skippedDuplicates > 0 ? ` · Bỏ qua ${skippedDuplicates} bản trùng` : ''
+            }!`
+          );
         }
+        this.autoEnrichNewBooks(importedBooks, { silent: silentSummary || imported > 1 });
+      } else if (!silentSummary) {
         this.toast(
-          summaryBits.length
-            ? `Đã thêm & gắn nhãn: ${summaryBits.join(' · ')}`
-            : `Đã thêm ${imported} cuốn EPUB & tự động gắn nhãn!`
+          skippedDuplicates > 0
+            ? `Không có sách mới — Đã bỏ qua ${skippedDuplicates} bản trùng!`
+            : 'Vui lòng chọn tệp .epub hợp lệ'
         );
-        this.autoEnrichNewBooks(importedBooks, { silent: imported > 1 });
+      }
+      return { addedCount: imported, addedBooks: importedBooks, skippedDuplicates };
+    }
+
+    async walkDirectoryHandleEpubs(dirHandle, maxDepth = 3, depth = 0) {
+      const files = [];
+      if (!dirHandle || depth > maxDepth || typeof dirHandle.values !== 'function') return files;
+      const skipNames = new Set(['node_modules', '.git', '.gemini', 'appdata', 'paperink-reader']);
+      try {
+        for await (const entry of dirHandle.values()) {
+          if (!entry || !entry.name) continue;
+          if (entry.kind === 'file' && /\.epub$/i.test(entry.name)) {
+            try {
+              const f = await entry.getFile();
+              if (f) files.push(f);
+            } catch (_) {}
+          } else if (entry.kind === 'directory' && depth < maxDepth) {
+            const lower = entry.name.toLowerCase();
+            if (lower.startsWith('.') || lower.endsWith('.sdr') || skipNames.has(lower)) continue;
+            const sub = await this.walkDirectoryHandleEpubs(entry, maxDepth, depth + 1);
+            files.push(...sub);
+          }
+        }
+      } catch (_) {}
+      return files;
+    }
+
+    async pickDeviceUpdateFolder({ runUpdateAfter = true } = {}) {
+      if (typeof window.showDirectoryPicker === 'function') {
+        try {
+          const handle = await window.showDirectoryPicker({ mode: 'read' });
+          if (handle) {
+            await window.PaperInkDB.setKV('deviceEpubDirHandle', handle);
+            await window.PaperInkDB.setKV('deviceEpubDirName', handle.name || 'Thư mục sách');
+            this.syncLinkedFolderUI(handle.name || 'Thư mục sách');
+            this.toast(`Đã liên kết thư mục "${handle.name}" để tự động Update 1 chạm!`);
+            if (runUpdateAfter) {
+              await this.runSmartEpubUpdate({ skipPickerPrompt: true });
+            }
+          }
+        } catch (err) {
+          if (err?.name !== 'AbortError') {
+            document.getElementById('update-folder-input')?.click();
+          }
+        }
       } else {
-        this.toast('Vui lòng chọn tệp .epub hợp lệ');
+        document.getElementById('update-folder-input')?.click();
+      }
+    }
+
+    syncLinkedFolderUI(folderName = '') {
+      const titleEl = document.getElementById('more-folder-link-title');
+      const subEl = document.getElementById('more-folder-link-sub');
+      if (folderName) {
+        if (titleEl) titleEl.textContent = `Thư mục tự động Update: ${folderName}`;
+        if (subEl) subEl.textContent = 'Chạm để đổi thư mục khác trên thiết bị (nhấn nút Update trên thanh đầu để quét nhanh)';
+      }
+    }
+
+    async runSmartEpubUpdate({ skipPickerPrompt = false } = {}) {
+      if (this._isRunningSmartUpdate) return;
+      this._isRunningSmartUpdate = true;
+
+      const btn = document.getElementById('lib-update-btn');
+      const lbl = document.getElementById('lib-update-label');
+      btn?.classList.add('updating');
+      if (lbl) lbl.textContent = 'Đang quét…';
+
+      try {
+        const prevSeriesSet = new Set(
+          this.getMergedBooks()
+            .map((b) => (b.series || '').trim().toLowerCase())
+            .filter(Boolean)
+        );
+
+        let totalAdded = 0;
+        let totalSkipped = 0;
+        const allNewSeries = new Set();
+        const allUpdatedSeries = new Set();
+        let ranAnySource = false;
+
+        // 1. If connected to PC Server -> auto-scan PC folders (kindle + Downloads + Desktop + Documents)
+        if (this.isOnlineToServer) {
+          ranAnySource = true;
+          try {
+            const res = await fetch(this.apiUrl('/api/library/auto-update'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data.books)) {
+                this.serverBooks = data.books;
+                this.knownServerBookIds = new Set(data.books.map((b) => b.id));
+                window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
+              }
+              totalAdded += data.addedCount || 0;
+              totalSkipped += data.skippedDuplicates || 0;
+              for (const s of data.newSeriesNames || []) allNewSeries.add(s);
+              for (const s of data.updatedSeriesNames || []) allUpdatedSeries.add(s);
+            }
+          } catch (err) {
+            console.warn('[PaperInk AutoUpdate PC]', err);
+          }
+        }
+
+        // 2. Also scan linked local device folder handle (if saved in IndexedDB on Phone/Tablet/Browser!)
+        let savedHandle = null;
+        try {
+          savedHandle = await window.PaperInkDB.getKV('deviceEpubDirHandle');
+        } catch (_) {}
+
+        if (savedHandle && typeof savedHandle.queryPermission === 'function') {
+          try {
+            let perm = await savedHandle.queryPermission({ mode: 'read' });
+            if (perm !== 'granted' && typeof savedHandle.requestPermission === 'function') {
+              perm = await savedHandle.requestPermission({ mode: 'read' });
+            }
+            if (perm === 'granted') {
+              ranAnySource = true;
+              const localFiles = await this.walkDirectoryHandleEpubs(savedHandle, 3);
+              if (localFiles.length > 0) {
+                const localRes = await this.importLocalEpubFiles(localFiles, { silentSummary: true });
+                totalAdded += localRes.addedCount || 0;
+                totalSkipped += localRes.skippedDuplicates || 0;
+                for (const b of localRes.addedBooks || []) {
+                  if (!b.series) continue;
+                  const sk = b.series.trim().toLowerCase();
+                  if (!prevSeriesSet.has(sk)) allNewSeries.add(b.series);
+                  else allUpdatedSeries.add(b.series);
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('[PaperInk AutoUpdate LocalHandle]', err);
+          }
+        } else if (!this.isOnlineToServer && !skipPickerPrompt) {
+          // Offline standalone device with no folder linked yet -> prompt once to link device's EPUB folder!
+          this._isRunningSmartUpdate = false;
+          btn?.classList.remove('updating');
+          if (lbl) lbl.textContent = 'Update';
+          await this.pickDeviceUpdateFolder({ runUpdateAfter: true });
+          return;
+        }
+
+        if (ranAnySource) {
+          this.updateSyncStatusUI();
+          this.renderCurrentRoute();
+          const seriesBits = [];
+          if (allNewSeries.size > 0) seriesBits.push(`${allNewSeries.size} bộ mới`);
+          if (allUpdatedSeries.size > 0) seriesBits.push(`bổ sung ${allUpdatedSeries.size} bộ đang có`);
+          const seriesStr = seriesBits.length ? ` (${seriesBits.join(', ')})` : '';
+          const skipStr = totalSkipped > 0 ? ` · Đã bỏ qua ${totalSkipped} bản trùng` : '';
+
+          if (totalAdded > 0) {
+            this.toast(`Update xong: Đã thêm ${totalAdded} sách mới${seriesStr}${skipStr}!`);
+          } else {
+            this.toast(`Không có sách mới — Kệ đã đủ mọi bộ/quyển trên máy${skipStr}!`);
+          }
+        }
+      } finally {
+        this._isRunningSmartUpdate = false;
+        btn?.classList.remove('updating');
+        if (lbl) lbl.textContent = 'Update';
       }
     }
 
@@ -6731,8 +6990,21 @@
       });
 
       // Top header actions
+      document.getElementById('lib-update-btn')?.addEventListener('click', () => {
+        this.runSmartEpubUpdate();
+      });
       document.getElementById('lib-import-btn')?.addEventListener('click', () => {
         document.getElementById('import-epub-input')?.click();
+      });
+      const updateFolderInp = document.getElementById('update-folder-input');
+      updateFolderInp?.addEventListener('change', async () => {
+        if (updateFolderInp.files?.length) {
+          const res = await this.importLocalEpubFiles(updateFolderInp.files, { silentSummary: false });
+          if (res && res.addedCount === 0 && res.skippedDuplicates === 0) {
+            this.toast('Không tìm thấy tệp .epub nào trong thư mục đã chọn');
+          }
+        }
+        updateFolderInp.value = '';
       });
       document.getElementById('lib-search-toggle')?.addEventListener('click', () => {
         this.setSearchOpen(!this.searchOpen);
@@ -6977,21 +7249,17 @@
       });
       document.getElementById('more-rescan-btn')?.addEventListener('click', async () => {
         this.closeAllSheets();
-        this.toast('Đang quét lại kho sách trên PC…');
-        try {
-          const res = await fetch(this.apiUrl('/api/library/rescan'), { method: 'POST' });
-          if (res.ok) {
-            const data = await res.json();
-            this.serverBooks = data.books || [];
-            window.PaperInkDB.setKV('libraryCatalog', this.serverBooks).catch(() => {});
-            this.updateSyncStatusUI();
-            this.renderCurrentRoute();
-            this.toast(`Đã tìm thấy ${this.serverBooks.length} cuốn EPUB Online!`);
-          }
-        } catch (_) {
-          this.toast('Không kết nối được tới máy chủ PC');
-        }
+        await this.runSmartEpubUpdate();
       });
+      document.getElementById('more-pick-folder-btn')?.addEventListener('click', async () => {
+        this.closeAllSheets();
+        await this.pickDeviceUpdateFolder({ runUpdateAfter: true });
+      });
+      window.PaperInkDB.getKV('deviceEpubDirName')
+        .then((name) => {
+          if (name) this.syncLinkedFolderUI(name);
+        })
+        .catch(() => {});
       document.getElementById('more-goodreads-enrich-btn')?.addEventListener('click', () => {
         this.closeAllSheets();
         this.runBatchGoodreadsEnrich();

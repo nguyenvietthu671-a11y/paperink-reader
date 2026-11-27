@@ -7280,4 +7280,29 @@ a.goodreads-pill:hover {
   margin-bottom: 3px;
 }
 
+/* ==================== 1-CLICK SMART EPUB UPDATE HEADER BUTTON ==================== */
+.hdr-update-pill {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.hdr-update-pill:hover {
+  background: var(--accent-soft);
+}
+
+.hdr-update-pill.updating {
+  pointer-events: none;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+@keyframes updateIconSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.hdr-update-pill.updating .update-spin-icon {
+  animation: updateIconSpin 820ms linear infinite;
+}
+
 
